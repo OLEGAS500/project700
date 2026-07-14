@@ -18,6 +18,12 @@ import {
 import { getAlertEventPayloadByEventId } from "./alert-event-payloads";
 import { getAlertPreferences, updateAlertPreferences } from "./alert-preferences";
 import {
+  getDashboardIncidentDetail,
+  getDashboardStoreSummary,
+  listDashboardIncidents,
+  listDashboardStoreSummaries
+} from "./dashboard";
+import {
   disableEmailDestination,
   getEmailDestination,
   upsertEmailDestination
@@ -167,7 +173,8 @@ describeIfDatabase("postgres smoke", () => {
       "0003_alert_event_payloads.sql",
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
-      "0006_alert_payload_versions.sql"
+      "0006_alert_payload_versions.sql",
+      "0007_dashboard_read_models.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
@@ -175,7 +182,8 @@ describeIfDatabase("postgres smoke", () => {
       "0003_alert_event_payloads.sql",
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
-      "0006_alert_payload_versions.sql"
+      "0006_alert_payload_versions.sql",
+      "0007_dashboard_read_models.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
@@ -3517,6 +3525,312 @@ describeIfDatabase("postgres smoke", () => {
       client.release();
     }
   });
+
+  it("builds dashboard store summaries without dropping empty stores or stale source checks", async () => {
+    const observed = await createStore({
+      name: "Dashboard Observed Store",
+      domain: "https://dashboard-observed.example.com",
+      sitemapUrl: "https://dashboard-observed.example.com/sitemap.xml",
+      feedUrl: "https://dashboard-observed.example.com/feed.xml",
+      categoryUrls: ["https://dashboard-observed.example.com/collections/all"]
+    });
+    const empty = await createStore({
+      name: "Dashboard Empty Store",
+      domain: "https://dashboard-empty.example.com",
+      sitemapUrl: "https://dashboard-empty.example.com/sitemap.xml",
+      feedUrl: "https://dashboard-empty.example.com/feed.xml",
+      categoryUrls: ["https://dashboard-empty.example.com/collections/all"]
+    });
+    const client = await (await import("./client")).getPool().connect();
+
+    try {
+      const olderSnapshot = await insertDashboardSnapshot(client, observed.store.id, "older");
+      const newerSnapshot = await insertDashboardSnapshot(client, observed.store.id, "newer");
+      await insertDashboardSourceCheck(client, {
+        snapshotId: olderSnapshot,
+        storeId: observed.store.id,
+        source: "feed",
+        status: "source_unavailable",
+        observedCount: 99,
+        secondsAgo: 120
+      });
+      await insertDashboardSourceCheck(client, {
+        snapshotId: newerSnapshot,
+        storeId: observed.store.id,
+        source: "feed",
+        status: "success",
+        observedCount: 101,
+        secondsAgo: 30
+      });
+      await insertDashboardSourceCheck(client, {
+        snapshotId: newerSnapshot,
+        storeId: observed.store.id,
+        source: "sitemap",
+        status: "partial",
+        observedCount: 103,
+        secondsAgo: 20
+      });
+
+      await insertDashboardIncident(client, {
+        storeId: observed.store.id,
+        severity: "critical",
+        type: "catalog_drop",
+        status: "open",
+        likelySource: "feed",
+        title: "Critical dashboard incident",
+        updatedAt: new Date(Date.now() - 10_000)
+      });
+      await insertDashboardIncident(client, {
+        storeId: observed.store.id,
+        severity: "warning",
+        type: "source_divergence",
+        status: "acknowledged",
+        likelySource: "feed",
+        title: "Acknowledged dashboard incident",
+        updatedAt: new Date(Date.now() - 9_000)
+      });
+      await insertDashboardIncident(client, {
+        storeId: observed.store.id,
+        severity: "warning",
+        type: "seo_regression",
+        status: "recovering",
+        likelySource: "product_page",
+        title: "Recovering dashboard incident",
+        updatedAt: new Date(Date.now() - 8_000)
+      });
+      await insertDashboardIncident(client, {
+        storeId: observed.store.id,
+        severity: "critical",
+        type: "source_health",
+        status: "resolved",
+        likelySource: "feed",
+        title: "Resolved dashboard incident",
+        updatedAt: new Date(Date.now() - 7_000)
+      });
+      await insertDashboardIncident(client, {
+        storeId: observed.store.id,
+        severity: "warning",
+        type: "source_health",
+        status: "ignored",
+        likelySource: "feed",
+        title: "Ignored dashboard incident",
+        updatedAt: new Date(Date.now() - 6_000)
+      });
+
+      const summaries = await listDashboardStoreSummaries();
+      const observedSummary = summaries.find((store) => store.id === observed.store.id);
+      const emptySummary = summaries.find((store) => store.id === empty.store.id);
+
+      expect(observedSummary).toMatchObject({
+        incidents: { open: 2, critical: 1, high: 2, recovering: 1 },
+        baseline: { status: "learning", updatedAt: null }
+      });
+      expect(observedSummary?.lastCheckedAt).toBeTruthy();
+      expect(observedSummary?.sources).toHaveLength(5);
+      expect(observedSummary?.sources.find((source) => source.source === "feed")).toMatchObject({
+        status: "success",
+        observedCount: 101
+      });
+      expect(observedSummary?.sources.find((source) => source.source === "sitemap")).toMatchObject({
+        status: "partial",
+        observedCount: 103
+      });
+      expect(emptySummary).toMatchObject({
+        incidents: { open: 0, critical: 0, high: 0, recovering: 0 },
+        lastCheckedAt: null
+      });
+      expect(emptySummary?.sources).toHaveLength(5);
+      expect(emptySummary?.sources.every((source) => source.status === null)).toBe(true);
+      await expect(getDashboardStoreSummary(observed.store.id)).resolves.toMatchObject({
+        id: observed.store.id
+      });
+      await expect(
+        getDashboardStoreSummary("00000000-0000-0000-0000-000000000099")
+      ).resolves.toBeNull();
+    } finally {
+      client.release();
+    }
+  });
+
+  it("lists dashboard incidents with keyset pagination and exposes a redacted detail model", async () => {
+    const primary = await createStore({
+      name: "Dashboard Incident Store",
+      domain: "https://dashboard-incidents.example.com",
+      sitemapUrl: "https://dashboard-incidents.example.com/sitemap.xml",
+      feedUrl: "https://dashboard-incidents.example.com/feed.xml",
+      categoryUrls: ["https://dashboard-incidents.example.com/collections/all"]
+    });
+    const other = await createStore({
+      name: "Dashboard Other Store",
+      domain: "https://dashboard-other.example.com",
+      sitemapUrl: "https://dashboard-other.example.com/sitemap.xml",
+      feedUrl: "https://dashboard-other.example.com/feed.xml",
+      categoryUrls: ["https://dashboard-other.example.com/collections/all"]
+    });
+    const client = await (await import("./client")).getPool().connect();
+
+    try {
+      const baseTime = Date.now();
+      const target = await insertDashboardIncident(client, {
+        storeId: primary.store.id,
+        severity: "critical",
+        type: "catalog_drop",
+        status: "open",
+        likelySource: "feed",
+        title: "Target dashboard incident",
+        updatedAt: new Date(baseTime - 3_000)
+      });
+      const productPageIncident = await insertDashboardIncident(client, {
+        storeId: primary.store.id,
+        severity: "warning",
+        type: "seo_regression",
+        status: "recovering",
+        likelySource: "product_page",
+        title: "Product page dashboard incident",
+        updatedAt: new Date(baseTime - 2_000)
+      });
+      const latest = await insertDashboardIncident(client, {
+        storeId: primary.store.id,
+        severity: "warning",
+        type: "source_health",
+        status: "acknowledged",
+        likelySource: "feed",
+        title: "Latest dashboard incident",
+        updatedAt: new Date(baseTime - 1_000)
+      });
+      await insertDashboardIncident(client, {
+        storeId: other.store.id,
+        severity: "critical",
+        type: "catalog_drop",
+        status: "open",
+        likelySource: "feed",
+        title: "Other store incident",
+        updatedAt: new Date(baseTime)
+      });
+
+      const sampleItems = Array.from({ length: 25 }, (_, index) => ({
+        stableKey: `dashboard-sku-${index}`,
+        offerId: `dashboard-offer-${index}`,
+        title: `Dashboard product ${index}`,
+        url: `https://dashboard-incidents.example.com/products/${index}`,
+        chatId: "must-not-be-exposed"
+      }));
+      await client.query(
+        `
+          INSERT INTO incident_signals (
+            incident_id, source, metric, before_value, after_value,
+            change_abs, change_pct, sample_items_json
+          )
+          VALUES ($1, 'feed', 'product_count', 1000, 700, 300, 0.3, $2::jsonb)
+        `,
+        [target, JSON.stringify(sampleItems)]
+      );
+      const alertEventId = await insertAlertTestEvent(
+        client,
+        target,
+        primary.store.id,
+        "dashboard-detail"
+      );
+      await client.query(
+        "UPDATE incident_events SET metadata_json = $2::jsonb WHERE id = $1",
+        [alertEventId, JSON.stringify({ reason: "dashboard_test_reason" })]
+      );
+      await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId: target,
+        eventId: alertEventId,
+        alertType: "incident_opened"
+      });
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET attempt_count = 2,
+              last_error = 'resend_authentication_failed: RESEND_API_KEY=secret@example.com',
+              status = 'failed',
+              failed_at = clock_timestamp(),
+              updated_at = clock_timestamp()
+          WHERE incident_event_id = $1
+            AND channel = 'email'
+        `,
+        [alertEventId]
+      );
+      await addIncidentComment(target, {
+        actor: "dashboard-operator@example.com",
+        body: "Dashboard detail comment"
+      });
+
+      const firstPage = await listDashboardIncidents({ storeId: primary.store.id, limit: 1 });
+      const secondPage = await listDashboardIncidents({
+        storeId: primary.store.id,
+        limit: 1,
+        cursor: firstPage.nextCursor ?? undefined
+      });
+      expect(firstPage.incidents.map((incident) => incident.id)).toEqual([latest]);
+      expect(secondPage.incidents.map((incident) => incident.id)).toEqual([productPageIncident]);
+      expect(new Set([...firstPage.incidents, ...secondPage.incidents].map((incident) => incident.id)).size).toBe(2);
+
+      await expect(
+        listDashboardIncidents({
+          storeId: primary.store.id,
+          status: "open",
+          severity: "critical",
+          type: "catalog_drop",
+          source: "feed"
+        })
+      ).resolves.toMatchObject({ incidents: [expect.objectContaining({ id: target })] });
+      await expect(
+        listDashboardIncidents({ storeId: primary.store.id, source: "product_page" })
+      ).resolves.toMatchObject({
+        incidents: [expect.objectContaining({ id: productPageIncident })]
+      });
+
+      const detail = await getDashboardIncidentDetail(target);
+      expect(detail?.incident).toMatchObject({ id: target, storeId: primary.store.id });
+      expect(detail?.store).toMatchObject({ id: primary.store.id });
+      expect(detail?.timeline).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: alertEventId, reason: "dashboard_test_reason" })
+        ])
+      );
+      expect(detail?.signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "product_count",
+            source: "feed",
+            evidence: { sampleCount: 25 }
+          })
+        ])
+      );
+      expect(detail?.comments).toEqual(
+        expect.arrayContaining([expect.objectContaining({ body: "Dashboard detail comment" })])
+      );
+      expect(detail?.alertDeliveries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            channel: "email",
+            attemptCount: 2,
+            lastErrorCode: "resend_authentication_failed"
+          })
+        ])
+      );
+      expect(detail?.samples).toHaveLength(20);
+      expect(detail?.samples[0]).toEqual({
+        stableKey: "dashboard-sku-0",
+        offerId: "dashboard-offer-0",
+        title: "Dashboard product 0",
+        url: "https://dashboard-incidents.example.com/products/0"
+      });
+      const serializedDetail = JSON.stringify(detail);
+      expect(serializedDetail).not.toContain("RESEND_API_KEY");
+      expect(serializedDetail).not.toContain("secret@example.com");
+      expect(serializedDetail).not.toContain("dashboard-operator@example.com");
+      expect(serializedDetail).not.toContain("must-not-be-exposed");
+      await expect(
+        getDashboardIncidentDetail("00000000-0000-0000-0000-000000000098")
+      ).resolves.toBeNull();
+    } finally {
+      client.release();
+    }
+  });
 });
 
 async function createPendingDelivery(
@@ -3559,6 +3873,132 @@ async function insertAlertTestEvent(
     [incidentId, storeId, `alert_preference_${suffix}`]
   );
   return event.rows[0].id;
+}
+
+async function insertDashboardSnapshot(
+  client: pg.PoolClient,
+  storeId: string,
+  suffix: string
+): Promise<string> {
+  const result = await client.query<{ id: string }>(
+    `
+      INSERT INTO snapshots (
+        store_id,
+        status,
+        baseline_role,
+        started_at,
+        finished_at,
+        idempotency_key
+      )
+      VALUES ($1, 'completed', 'normal_check', clock_timestamp(), clock_timestamp(), $2)
+      RETURNING id
+    `,
+    [storeId, `dashboard-${suffix}-${storeId}`]
+  );
+  return result.rows[0].id;
+}
+
+async function insertDashboardSourceCheck(
+  client: pg.PoolClient,
+  input: {
+    snapshotId: string;
+    storeId: string;
+    source: "category" | "product_page" | "sitemap" | "feed" | "merchant_center";
+    status:
+      | "success"
+      | "partial"
+      | "timeout"
+      | "blocked"
+      | "authentication_failed"
+      | "parse_failed"
+      | "source_unavailable";
+    observedCount: number;
+    secondsAgo: number;
+  }
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO source_checks (
+        snapshot_id,
+        store_id,
+        source,
+        check_key,
+        status,
+        started_at,
+        finished_at,
+        duration_ms,
+        items_observed
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        'dashboard',
+        $4,
+        clock_timestamp() - ($6 * interval '1 second') - interval '1 second',
+        clock_timestamp() - ($6 * interval '1 second'),
+        1000,
+        $5
+      )
+    `,
+    [
+      input.snapshotId,
+      input.storeId,
+      input.source,
+      input.status,
+      input.observedCount,
+      input.secondsAgo
+    ]
+  );
+}
+
+async function insertDashboardIncident(
+  client: pg.PoolClient,
+  input: {
+    storeId: string;
+    severity: "critical" | "warning" | "info";
+    type:
+      | "catalog_drop"
+      | "source_divergence"
+      | "seo_regression"
+      | "price_availability_mismatch"
+      | "source_health";
+    status: "open" | "investigating" | "acknowledged" | "recovering" | "resolved" | "ignored";
+    likelySource: string | null;
+    title: string;
+    updatedAt: Date;
+  }
+): Promise<string> {
+  const result = await client.query<{ id: string }>(
+    `
+      INSERT INTO incidents (
+        store_id,
+        severity,
+        type,
+        title,
+        summary,
+        likely_source,
+        status,
+        first_detected_at,
+        last_seen_at,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8, $8)
+      RETURNING id
+    `,
+    [
+      input.storeId,
+      input.severity,
+      input.type,
+      input.title,
+      `${input.title} summary`,
+      input.likelySource,
+      input.status,
+      input.updatedAt
+    ]
+  );
+  return result.rows[0].id;
 }
 
 async function markOtherChannelSent(

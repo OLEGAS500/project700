@@ -1,26 +1,25 @@
-import { incidentStatusSchema } from "@eim/core";
-import { listIncidents } from "@eim/db";
+import { InvalidDashboardCursorError, listDashboardIncidents } from "@eim/db";
 import { NextResponse } from "next/server";
-import { z } from "zod";
-
-const storeIdSchema = z.string().uuid();
+import { parseDashboardIncidentQuery } from "./query";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const storeId = storeIdSchema.safeParse(url.searchParams.get("storeId"));
-  const statusValue = url.searchParams.get("status");
-  const status = statusValue ? incidentStatusSchema.safeParse(statusValue) : null;
+  const parsed = parseDashboardIncidentQuery(url.searchParams);
 
-  if (!storeId.success || (statusValue && !status?.success)) {
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "storeId must be a UUID and status must be a valid incident status" },
+      { error: parsed.error, ...("issues" in parsed ? { issues: parsed.issues } : {}) },
       { status: 400 }
     );
   }
 
-  const incidents = await listIncidents({
-    storeId: storeId.data,
-    status: status?.data
-  });
-  return NextResponse.json({ incidents });
+  try {
+    const result = await listDashboardIncidents(parsed.data);
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof InvalidDashboardCursorError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
 }
