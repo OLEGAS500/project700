@@ -82,6 +82,9 @@ describe("Telegram alert runtime", () => {
     expect(createTelegramWorkerId({ TELEGRAM_WORKER_ID: " configured-worker " })).toBe(
       "configured-worker"
     );
+    expect(createTelegramWorkerId({ TELEGRAM_WORKER_ID: "   " })).toMatch(
+      /^telegram-alerts:.+:[0-9]+$/
+    );
     expect(createTelegramWorkerId({})).toMatch(/^telegram-alerts:.+:[0-9]+$/);
   });
 });

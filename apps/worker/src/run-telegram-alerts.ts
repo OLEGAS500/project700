@@ -51,7 +51,7 @@ export function createTelegramWorkerId(
   environment: Record<string, string | undefined> = process.env
 ): string {
   const configuredWorkerId = environment.TELEGRAM_WORKER_ID?.trim();
-  return configuredWorkerId ?? `telegram-alerts:${hostname()}:${process.pid}`;
+  return configuredWorkerId || `telegram-alerts:${hostname()}:${process.pid}`;
 }
 
 export async function runTelegramAlertsOnce(
