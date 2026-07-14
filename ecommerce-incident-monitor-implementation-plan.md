@@ -462,7 +462,7 @@ Milestone 7.5 Telegram run-once runtime is complete and operationally verified t
 
 Telegram delivery is complete and CI-verified through the runtime boundary. Controlled live-provider delivery remains pending until a disposable database, test bot, and private test destination are available.
 
-Milestone 7.6.1 email destination configuration is code-complete. Migration `0005_email_destinations.sql` stores normalized recipient addresses without provider credentials, and the worker terminally fails a missing or disabled email destination before invoking its sender. Operational sign-off requires the updated PostgreSQL smoke suite and clean GitHub CI.
+Milestone 7.6.1 email destination configuration is complete and operationally verified. Migration `0005_email_destinations.sql` stores normalized recipient addresses without provider credentials, and the worker terminally fails a missing or disabled email destination before invoking its sender. Clean GitHub CI passed the updated PostgreSQL suite and full validation pipeline, including ordered migration replay, recipient normalization, destination upsert/disable, sender isolation, and terminal configuration failures.
 
 Milestone 7 hardening backlog: classify an immutable payload that is missing, malformed, or unsupported after claim as a permanent delivery failure (`payload_missing`, `payload_validation_failed`, or `unsupported_payload_version`) so the lease does not wait for expiry without an immediate diagnostic.
 
