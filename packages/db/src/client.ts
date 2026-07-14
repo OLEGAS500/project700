@@ -16,6 +16,12 @@ export function getPool(): pg.Pool {
   return pool;
 }
 
+export async function closePool(): Promise<void> {
+  const activePool = pool;
+  pool = undefined;
+  await activePool?.end();
+}
+
 export async function withTransaction<T>(
   callback: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> {

@@ -12,10 +12,12 @@
     "lint": "npm run lint -w @eim/web",
     "test": "vitest run",
     "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "worker:telegram": "tsx apps/worker/src/run-telegram-alerts.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
   }
