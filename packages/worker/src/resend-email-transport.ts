@@ -129,7 +129,7 @@ export function createResendEmailTransport(
         throw new ResendTransportError(
           "resend_network_error",
           true,
-          sanitizeDescription(errorMessage(error), apiKey, request, body)
+          sanitizeDescription(errorMessage(error), apiKey, request, body, from)
         );
       } finally {
         clearTimeout(timeout);
@@ -139,11 +139,11 @@ export function createResendEmailTransport(
         throw new ResendTransportError(
           "resend_server_error",
           true,
-          await readOptionalDescription(response, apiKey, request, body)
+          await readOptionalDescription(response, apiKey, request, body, from)
         );
       }
 
-      const parsed = await readResponse(response, apiKey, request, body);
+      const parsed = await readResponse(response, apiKey, request, body, from);
       if (response.ok) {
         if (typeof parsed.id !== "string" || !parsed.id.trim()) {
           throw new ResendTransportError("resend_response_invalid", false);
@@ -164,7 +164,8 @@ async function readResponse(
   response: Response,
   apiKey: string,
   request: EmailSendRequest,
-  requestBody: string
+  requestBody: string,
+  from: string
 ): Promise<{ id?: string; error?: ResendErrorResponse }> {
   let value: unknown;
   try {
@@ -183,7 +184,7 @@ async function readResponse(
         name: typeof errorValue.name === "string" ? errorValue.name : undefined,
         message:
           typeof errorValue.message === "string"
-            ? sanitizeDescription(errorValue.message, apiKey, request, requestBody)
+            ? sanitizeDescription(errorValue.message, apiKey, request, requestBody, from)
             : undefined
       }
     : undefined;
@@ -198,13 +199,14 @@ async function readOptionalDescription(
   response: Response,
   apiKey: string,
   request: EmailSendRequest,
-  requestBody: string
+  requestBody: string,
+  from: string
 ): Promise<string | undefined> {
   try {
     const value: unknown = JSON.parse(await response.text());
     const errorValue = isRecord(value) && isRecord(value.error) ? value.error : value;
     return isRecord(errorValue) && typeof errorValue.message === "string"
-      ? sanitizeDescription(errorValue.message, apiKey, request, requestBody)
+      ? sanitizeDescription(errorValue.message, apiKey, request, requestBody, from)
       : undefined;
   } catch {
     return undefined;
@@ -240,6 +242,14 @@ function classifyResponseError(
   }
   if (name === "daily_quota_exceeded" || name === "monthly_quota_exceeded") {
     return new ResendTransportError("resend_quota_exceeded", false, safeDescription);
+  }
+  if (httpStatus === 429) {
+    return new ResendTransportError(
+      "resend_rate_limited",
+      true,
+      safeDescription,
+      retryAfterSeconds
+    );
   }
 
   const code = permanentErrorCode(name, httpStatus);
@@ -291,10 +301,17 @@ function sanitizeDescription(
   description: string,
   apiKey: string,
   request: EmailSendRequest,
-  requestBody: string
+  requestBody: string,
+  from: string
 ): string | undefined {
   let sanitized = redactResendApiKey(description, apiKey);
-  for (const value of [requestBody, request.content.text, ...request.destination.recipientEmails]) {
+  for (const value of [
+    requestBody,
+    request.content.subject,
+    request.content.text,
+    from,
+    ...request.destination.recipientEmails
+  ]) {
     if (value) sanitized = sanitized.replaceAll(value, "[REDACTED]");
   }
   sanitized = sanitized

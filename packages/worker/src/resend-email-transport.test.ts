@@ -9,6 +9,7 @@ import {
 
 const apiKey = "re_test_secret";
 const recipient = "ops@example.com";
+const subject = "[New incident] Example Store: Catalog drop detected";
 const messageText = "A private alert body";
 
 describe("Resend email transport", () => {
@@ -69,7 +70,7 @@ describe("Resend email transport", () => {
     expect(JSON.parse(String(requestInit?.body))).toEqual({
       from: "EIM Alerts <alerts@example.com>",
       to: [recipient],
-      subject: "[New incident] Example Store: Catalog drop detected",
+      subject,
       text: messageText
     });
     expect(calls).toBe(1);
@@ -92,24 +93,21 @@ describe("Resend email transport", () => {
     expect(keys).toEqual(["eim-delivery-delivery-id", "eim-delivery-delivery-id"]);
   });
 
-  it("redacts API keys, recipients, content, and URLs from network errors", async () => {
+  it("redacts API keys, sender and recipient details, content, and URLs from network errors", async () => {
     const fetchImpl: ResendFetch = async () => {
       throw new Error(
-        `POST https://api.resend.com/emails Bearer ${apiKey} ${recipient} ${messageText}`
+        `POST https://api.resend.com/emails Bearer ${apiKey} EIM Alerts <alerts@example.com> ${recipient} ${subject} ${messageText}`
       );
     };
-    const transport = createResendEmailTransport({
-      apiKey,
-      fromAddress: "alerts@example.com",
-      fromName: null,
-      fetchImpl
-    });
+    const transport = createTransport(fetchImpl);
 
     const error = await captureError(transport.send(createRequest()));
     expect(error).toMatchObject({ code: "resend_network_error", retryable: true });
     expect(error.message).not.toContain(apiKey);
     expect(error.message).not.toContain(recipient);
+    expect(error.message).not.toContain(subject);
     expect(error.message).not.toContain(messageText);
+    expect(error.message).not.toContain("alerts@example.com");
     expect(error.message).not.toContain("api.resend.com");
   });
 
@@ -160,6 +158,27 @@ describe("Resend email transport", () => {
       code: "resend_rate_limited",
       retryable: true,
       retryAfterSeconds: 123
+    });
+  });
+
+  it("falls back to transient rate limiting for unknown HTTP 429 errors", async () => {
+    const transport = createTransport(async () =>
+      jsonResponse(
+        {
+          error: {
+            name: "unknown_rate_limit_variant",
+            message: "Try again later"
+          }
+        },
+        429,
+        { "retry-after": "90" }
+      )
+    );
+
+    await expect(captureError(transport.send(createRequest()))).resolves.toMatchObject({
+      code: "resend_rate_limited",
+      retryable: true,
+      retryAfterSeconds: 90
     });
   });
 
@@ -228,7 +247,7 @@ function createRequest(): EmailSendRequest {
     channel: "email",
     destination: { recipientEmails: [recipient] },
     content: {
-      subject: "[New incident] Example Store: Catalog drop detected",
+      subject,
       text: messageText
     }
   };
