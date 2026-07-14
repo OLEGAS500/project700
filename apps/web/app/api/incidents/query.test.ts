@@ -10,7 +10,7 @@ describe("dashboard incident query parsing", () => {
           status: "open",
           severity: "critical",
           type: "catalog_drop",
-          source: "feed",
+          likelySource: "feed",
           limit: "100"
         })
       )
@@ -21,7 +21,7 @@ describe("dashboard incident query parsing", () => {
         status: "open",
         severity: "critical",
         type: "catalog_drop",
-        source: "feed",
+        likelySource: "feed",
         limit: 100
       }
     });
@@ -42,6 +42,21 @@ describe("dashboard incident query parsing", () => {
     expect(parseDashboardIncidentQuery(new URLSearchParams({ source: "not-a-source" }))).toMatchObject({
       success: false,
       error: "Invalid incident list query"
+    });
+    expect(
+      parseDashboardIncidentQuery(new URLSearchParams({ likelySource: "feed_or_publication" }))
+    ).toEqual({ success: true, data: { likelySource: "feed_or_publication" } });
+    expect(parseDashboardIncidentQuery(new URLSearchParams({ source: "feed" }))).toEqual({
+      success: true,
+      data: { likelySource: "feed" }
+    });
+    expect(
+      parseDashboardIncidentQuery(
+        new URLSearchParams({ source: "feed", likelySource: "product_page" })
+      )
+    ).toEqual({
+      success: false,
+      error: "source and likelySource must match when both are provided"
     });
   });
 });

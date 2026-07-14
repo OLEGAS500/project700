@@ -3576,7 +3576,7 @@ describeIfDatabase("postgres smoke", () => {
         severity: "critical",
         type: "catalog_drop",
         status: "open",
-        likelySource: "feed",
+        likelySource: "feed_or_publication",
         title: "Critical dashboard incident",
         updatedAt: new Date(Date.now() - 10_000)
       });
@@ -3676,7 +3676,7 @@ describeIfDatabase("postgres smoke", () => {
         severity: "critical",
         type: "catalog_drop",
         status: "open",
-        likelySource: "feed",
+        likelySource: "feed_or_publication",
         title: "Target dashboard incident",
         updatedAt: new Date(baseTime - 3_000)
       });
@@ -3774,11 +3774,11 @@ describeIfDatabase("postgres smoke", () => {
           status: "open",
           severity: "critical",
           type: "catalog_drop",
-          source: "feed"
+          likelySource: "feed_or_publication"
         })
       ).resolves.toMatchObject({ incidents: [expect.objectContaining({ id: target })] });
       await expect(
-        listDashboardIncidents({ storeId: primary.store.id, source: "product_page" })
+        listDashboardIncidents({ storeId: primary.store.id, likelySource: "product_page" })
       ).resolves.toMatchObject({
         incidents: [expect.objectContaining({ id: productPageIncident })]
       });
@@ -3964,7 +3964,16 @@ async function insertDashboardIncident(
       | "price_availability_mismatch"
       | "source_health";
     status: "open" | "investigating" | "acknowledged" | "recovering" | "resolved" | "ignored";
-    likelySource: string | null;
+    likelySource:
+      | "feed"
+      | "sitemap"
+      | "category"
+      | "product_page"
+      | "merchant_center"
+      | "feed_or_publication"
+      | "feed_or_storefront_product_data"
+      | "site_template_or_deployment"
+      | null;
     title: string;
     updatedAt: Date;
   }

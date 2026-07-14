@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   incidentSeveritySchema,
+  incidentLikelySourceSchema,
   incidentStatusSchema,
   incidentTypeSchema
 } from "../schemas";
@@ -31,7 +32,7 @@ export const canonicalAlertPayloadSchema = z
         summary: z.string(),
         status: incidentStatusSchema,
         affectedCount: z.number().int().min(0),
-        likelySource: z.string().nullable(),
+        likelySource: incidentLikelySourceSchema.nullable(),
         confidenceScore: z.number().min(0).max(1).nullable(),
         firstDetectedAt: z.string().datetime({ offset: true })
       })

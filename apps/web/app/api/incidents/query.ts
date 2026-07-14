@@ -1,8 +1,8 @@
 import {
   incidentSeveritySchema,
+  incidentLikelySourceSchema,
   incidentStatusSchema,
-  incidentTypeSchema,
-  sourceCheckSourceSchema
+  incidentTypeSchema
 } from "@eim/core";
 import { z } from "zod";
 
@@ -12,7 +12,8 @@ const dashboardIncidentQuerySchema = z
     status: incidentStatusSchema.optional(),
     severity: incidentSeveritySchema.optional(),
     type: incidentTypeSchema.optional(),
-    source: sourceCheckSourceSchema.optional(),
+    likelySource: incidentLikelySourceSchema.optional(),
+    source: incidentLikelySourceSchema.optional(),
     cursor: z.string().min(1).max(1_000).optional(),
     limit: z
       .string()
@@ -42,5 +43,23 @@ export function parseDashboardIncidentQuery(searchParams: URLSearchParams) {
     };
   }
 
-  return { success: true as const, data: parsed.data };
+  if (
+    parsed.data.source &&
+    parsed.data.likelySource &&
+    parsed.data.source !== parsed.data.likelySource
+  ) {
+    return {
+      success: false as const,
+      error: "source and likelySource must match when both are provided"
+    };
+  }
+
+  const { source, likelySource, ...filters } = parsed.data;
+  return {
+    success: true as const,
+    data: {
+      ...filters,
+      ...(likelySource || source ? { likelySource: likelySource ?? source } : {})
+    }
+  };
 }

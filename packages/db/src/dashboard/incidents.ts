@@ -1,4 +1,9 @@
-import type { IncidentSeverity, IncidentStatus, IncidentType } from "@eim/core";
+import type {
+  IncidentLikelySource,
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentType
+} from "@eim/core";
 import { getPool } from "../client";
 
 export type DashboardIncidentListItem = {
@@ -11,7 +16,7 @@ export type DashboardIncidentListItem = {
   title: string;
   summary: string;
   affectedCount: number;
-  likelySource: string | null;
+  likelySource: IncidentLikelySource | null;
   confidenceScore: number | null;
   firstDetectedAt: string;
   updatedAt: string;
@@ -22,7 +27,7 @@ export type DashboardIncidentListInput = {
   status?: IncidentStatus;
   severity?: IncidentSeverity;
   type?: IncidentType;
-  source?: string;
+  likelySource?: IncidentLikelySource;
   cursor?: string;
   limit?: number;
 };
@@ -49,7 +54,7 @@ export type DashboardIncidentListRow = {
   title: string;
   summary: string;
   affected_count: number;
-  likely_source: string | null;
+  likely_source: IncidentLikelySource | null;
   confidence_score: string | null;
   first_detected_at: Date;
   updated_at: Date;
@@ -107,7 +112,7 @@ export async function listDashboardIncidents(
       input.status ?? null,
       input.severity ?? null,
       input.type ?? null,
-      input.source ?? null,
+      input.likelySource ?? null,
       cursor?.updatedAt ?? null,
       cursor?.id ?? null,
       limit + 1

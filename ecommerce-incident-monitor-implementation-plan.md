@@ -491,7 +491,7 @@ Acceptance criteria:
 - Incident detail explains what changed and why the system suspects the likely source.
 - User can acknowledge, ignore, comment, and set maintenance window without database access.
 
-Milestone 8.1 dashboard read models and read-only API is code-complete pending PostgreSQL CI verification. It adds isolated dashboard repositories for store summaries, keyset-paginated incident lists, and safe incident details; the slice deliberately excludes dashboard UI, write actions, settings forms, polling, and new incident decisions.
+Milestone 8.1 dashboard read models and read-only API is complete and operationally verified. It adds isolated dashboard repositories for store summaries, keyset-paginated incident lists, and safe incident details; clean GitHub CI verified ordered migration replay, deterministic latest source checks, empty-store inclusion, incident status/severity/source filters, keyset pagination, store isolation, bounded samples, stable timeline/comments, and redacted alert-delivery and timeline metadata. The slice deliberately excludes dashboard UI, write actions, settings forms, polling, and new incident decisions.
 
 ### Milestone 9: Merchant Center Integration
 
