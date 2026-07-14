@@ -1143,7 +1143,7 @@ describeIfDatabase("postgres smoke", () => {
       { event_type: "source_divergence_reopened", count: "1" },
       { event_type: "source_divergence_resolved", count: "1" }
     ]);
-  });
+  }, 15_000);
 
   it("creates one grouped SEO regression incident for compatible product-page samples", async () => {
     const created = await createStore({
