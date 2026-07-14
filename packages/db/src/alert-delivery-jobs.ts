@@ -75,6 +75,8 @@ export type MarkAlertDeliveryAttemptFailedInput = {
 };
 
 export type AlertDeliveryConfigurationErrorCode =
+  | "email_destination_missing"
+  | "email_destination_disabled"
   | "telegram_destination_missing"
   | "telegram_destination_disabled";
 

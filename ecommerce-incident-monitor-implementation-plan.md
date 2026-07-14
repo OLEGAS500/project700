@@ -440,6 +440,7 @@ Acceptance criteria:
 - Milestone 7.3 stores one secret-free Telegram destination per store, exposes strict GET/PUT/DELETE configuration endpoints, resolves enabled destinations before fake transport invocation, and terminally fails missing or disabled destination configuration without consuming provider retry attempts.
 - Milestone 7.4 sends Telegram messages through an injectable HTTP transport, persists `<chat_id>:<message_id>` as the provider identifier, applies Telegram `retry_after` to the existing fenced retry schedule, and terminally classifies permanent provider errors without exposing bot credentials.
 - Milestone 7.5 provides a run-once Telegram runtime entrypoint. It validates `DATABASE_URL` and `TELEGRAM_BOT_TOKEN` before claiming deliveries, uses one process-scoped worker identity, runs one Telegram batch, emits only safe aggregate counts, and exits nonzero only for configuration or batch-level runtime failures.
+- Milestone 7.6.1 adds a secret-free email destination per store with strict GET/PUT/DELETE configuration, normalized recipient addresses, and terminal missing/disabled destination handling before an email provider transport is introduced.
 - Pending email and Telegram intents can be claimed independently; active leases are not double-claimed, expired leases are reclaimed, stale workers are fenced, and retry delay follows 1, 5, 15, and 60 minute steps before the configured maximum attempts.
 - The first worker slice uses an injected fake sender only; it does not call Telegram, email, or any provider API.
 - Critical confirmed incidents send one alert.
@@ -458,6 +459,10 @@ Milestone 7.4 Telegram HTTP transport is complete and operationally verified. Th
 Enabling a Telegram destination affects future alert deliveries and does not automatically retry historical terminal configuration failures.
 
 Milestone 7.5 Telegram run-once runtime is complete and operationally verified through injected transport responses. `npm run worker:telegram` loads configuration before the first claim, creates the real transport, executes one Telegram batch, and writes only aggregate delivery statistics. It deliberately does not add a loop, scheduler, or hosting integration; `SIGTERM` cannot cause a second batch to start. Clean GitHub CI passed the current PostgreSQL suite and full validation pipeline. A controlled live Telegram provider smoke test with a private test chat remains pending and is never run in CI.
+
+Telegram delivery is complete and CI-verified through the runtime boundary. Controlled live-provider delivery remains pending until a disposable database, test bot, and private test destination are available.
+
+Milestone 7.6.1 email destination configuration is code-complete. Migration `0005_email_destinations.sql` stores normalized recipient addresses without provider credentials, and the worker terminally fails a missing or disabled email destination before invoking its sender. Operational sign-off requires the updated PostgreSQL smoke suite and clean GitHub CI.
 
 Milestone 7 hardening backlog: classify an immutable payload that is missing, malformed, or unsupported after claim as a permanent delivery failure (`payload_missing`, `payload_validation_failed`, or `unsupported_payload_version`) so the lease does not wait for expiry without an immediate diagnostic.
 

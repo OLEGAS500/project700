@@ -1,5 +1,6 @@
 import {
   claimDueAlertDeliveries,
+  getEmailDestination,
   getTelegramDestination,
   markAlertDeliveryAttemptFailed,
   markAlertDeliveryPermanentFailed,
@@ -36,6 +37,9 @@ export type EmailSendRequest = {
   incidentEventId: string;
   alertType: AlertType;
   channel: "email";
+  destination: {
+    recipientEmails: string[];
+  };
   content: RenderedEmailAlert;
 };
 
@@ -194,9 +198,20 @@ async function renderAlertDeliveryMessage(
     };
   }
 
+  const destination = await getEmailDestination(delivery.storeId);
+  if (!destination) {
+    return { configurationError: "email_destination_missing" };
+  }
+  if (!destination.enabled) {
+    return { configurationError: "email_destination_disabled" };
+  }
+
   return {
     ...common,
     channel: "email",
+    destination: {
+      recipientEmails: destination.recipientEmails
+    },
     content: renderEmailAlert(delivery.payload)
   };
 }

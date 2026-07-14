@@ -4,6 +4,7 @@ export * from "./alert-preferences";
 export * from "./alert-delivery-jobs";
 export * from "./baselines";
 export * from "./client";
+export * from "./email-destinations";
 export * from "./incidents";
 export * from "./maintenance-windows";
 export * from "./migrations";

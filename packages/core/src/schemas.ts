@@ -128,6 +128,27 @@ export const telegramDestinationInputSchema = z
   })
   .strict();
 
+export const emailDestinationInputSchema = z
+  .object({
+    recipientEmails: z.array(z.string().trim().email().max(320)).min(1).max(20),
+    enabled: z.boolean()
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const normalized = input.recipientEmails.map((email) => email.toLowerCase());
+    if (new Set(normalized).size !== normalized.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["recipientEmails"],
+        message: "Recipient emails must be unique"
+      });
+    }
+  })
+  .transform((input) => ({
+    ...input,
+    recipientEmails: input.recipientEmails.map((email) => email.toLowerCase())
+  }));
+
 const maintenanceWindowDateSchema = z.string().datetime({ offset: true });
 
 export const createMaintenanceWindowInputSchema = z
@@ -251,6 +272,7 @@ export type UpdateStoreThresholdsInput = z.infer<typeof updateStoreThresholdsInp
 export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;
 export type UpdateAlertPreferencesInput = z.infer<typeof updateAlertPreferencesInputSchema>;
 export type TelegramDestinationInput = z.infer<typeof telegramDestinationInputSchema>;
+export type EmailDestinationInput = z.infer<typeof emailDestinationInputSchema>;
 export type CreateMaintenanceWindowInput = z.infer<typeof createMaintenanceWindowInputSchema>;
 
 export const defaultStoreThresholds: StoreThresholds = {
