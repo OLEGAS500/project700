@@ -71,17 +71,28 @@ export type MarkAlertDeliveryAttemptFailedInput = {
   claimedAttemptCount: number;
   error: unknown;
   maxAttempts?: number;
+  retryAfterSeconds?: number;
 };
 
 export type AlertDeliveryConfigurationErrorCode =
   | "telegram_destination_missing"
   | "telegram_destination_disabled";
 
-export type MarkAlertDeliveryConfigurationFailedInput = {
+export type AlertDeliveryPermanentErrorCode =
+  | AlertDeliveryConfigurationErrorCode
+  | "telegram_bad_request"
+  | "telegram_unauthorized"
+  | "telegram_forbidden"
+  | "telegram_chat_not_found"
+  | "telegram_topic_not_found"
+  | "telegram_response_invalid";
+
+export type MarkAlertDeliveryPermanentFailedInput = {
   deliveryId: string;
   workerId: string;
   claimedAttemptCount: number;
-  errorCode: AlertDeliveryConfigurationErrorCode;
+  errorCode: AlertDeliveryPermanentErrorCode;
+  safeDescription?: string;
 };
 
 const retryDelaysSeconds = [60, 300, 900, 3_600] as const;
@@ -195,7 +206,7 @@ export async function markAlertDeliveryAttemptFailed(
   input: MarkAlertDeliveryAttemptFailedInput
 ): Promise<AlertDeliveryJobRecord | null> {
   const maxAttempts = input.maxAttempts ?? 5;
-  const retryDelaySeconds = retryDelaysSeconds[Math.min(input.claimedAttemptCount - 1, retryDelaysSeconds.length - 1)];
+  const retryDelaySeconds = resolveRetryDelaySeconds(input);
   const error = toErrorMessage(input.error);
   const result = await getPool().query<AlertDeliveryJobRow>(
     `
@@ -231,9 +242,10 @@ export async function markAlertDeliveryAttemptFailed(
   return existing.rows[0] ? mapAlertDeliveryJobRecord(existing.rows[0]) : null;
 }
 
-export async function markAlertDeliveryConfigurationFailed(
-  input: MarkAlertDeliveryConfigurationFailedInput
+export async function markAlertDeliveryPermanentFailed(
+  input: MarkAlertDeliveryPermanentFailedInput
 ): Promise<AlertDeliveryJobRecord | null> {
+  const error = formatPermanentError(input.errorCode, input.safeDescription);
   const result = await getPool().query<AlertDeliveryJobRow>(
     `
       UPDATE alert_deliveries
@@ -250,7 +262,7 @@ export async function markAlertDeliveryConfigurationFailed(
         AND attempt_count = $3
       RETURNING *
     `,
-    [input.deliveryId, input.workerId, input.claimedAttemptCount, input.errorCode]
+    [input.deliveryId, input.workerId, input.claimedAttemptCount, error]
   );
   if (result.rows[0]) return mapAlertDeliveryJobRecord(result.rows[0]);
 
@@ -263,10 +275,13 @@ export async function markAlertDeliveryConfigurationFailed(
         AND attempt_count = $2
         AND last_error = $3
     `,
-    [input.deliveryId, input.claimedAttemptCount, input.errorCode]
+    [input.deliveryId, input.claimedAttemptCount, error]
   );
   return existing.rows[0] ? mapAlertDeliveryJobRecord(existing.rows[0]) : null;
 }
+
+/** @deprecated Use markAlertDeliveryPermanentFailed. */
+export const markAlertDeliveryConfigurationFailed = markAlertDeliveryPermanentFailed;
 
 function mapClaimedAlertDelivery(
   row: AlertDeliveryJobRow,
@@ -306,4 +321,24 @@ function mapAlertDeliveryJobRecord(row: AlertDeliveryJobRow): AlertDeliveryJobRe
 function toErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 2_000);
+}
+
+function resolveRetryDelaySeconds(
+  input: MarkAlertDeliveryAttemptFailedInput
+): number {
+  if (input.retryAfterSeconds !== undefined && Number.isFinite(input.retryAfterSeconds)) {
+    return Math.min(86_400, Math.max(1, Math.trunc(input.retryAfterSeconds)));
+  }
+
+  return retryDelaysSeconds[
+    Math.min(input.claimedAttemptCount - 1, retryDelaysSeconds.length - 1)
+  ];
+}
+
+function formatPermanentError(
+  errorCode: AlertDeliveryPermanentErrorCode,
+  safeDescription: string | undefined
+): string {
+  const description = safeDescription?.trim();
+  return (description ? `${errorCode}: ${description}` : errorCode).slice(0, 2_000);
 }

@@ -2,7 +2,7 @@ import {
   claimDueAlertDeliveries,
   getTelegramDestination,
   markAlertDeliveryAttemptFailed,
-  markAlertDeliveryConfigurationFailed,
+  markAlertDeliveryPermanentFailed,
   markAlertDeliverySent,
   type AlertDeliveryConfigurationErrorCode,
   type AlertDeliveryChannel
@@ -14,6 +14,10 @@ import {
   type RenderedEmailAlert,
   type RenderedTelegramAlert
 } from "@eim/core";
+import {
+  isPermanentTelegramTransportError,
+  TelegramTransportError
+} from "./telegram-transport";
 
 export type TelegramSendRequest = {
   deliveryId: string;
@@ -37,18 +41,30 @@ export type EmailSendRequest = {
 
 export type AlertDeliveryMessage = TelegramSendRequest | EmailSendRequest;
 
-export type AlertDeliverySender = {
-  send(message: AlertDeliveryMessage): Promise<{ providerMessageId: string }>;
+export type AlertDeliverySender<
+  Message extends AlertDeliveryMessage = AlertDeliveryMessage
+> = {
+  send(message: Message): Promise<{ providerMessageId: string }>;
 };
 
-export type RunAlertDeliveryBatchInput = {
-  channel: AlertDeliveryChannel;
+type RunAlertDeliveryBatchBaseInput = {
   workerId: string;
-  sender: AlertDeliverySender;
   limit?: number;
   leaseSeconds?: number;
   maxAttempts?: number;
 };
+
+export type RunAlertDeliveryBatchInput = RunAlertDeliveryBatchBaseInput &
+  (
+    | {
+        channel: "telegram";
+        sender: AlertDeliverySender<TelegramSendRequest>;
+      }
+    | {
+        channel: "email";
+        sender: AlertDeliverySender<EmailSendRequest>;
+      }
+  );
 
 export type AlertDeliveryBatchResult = {
   claimed: number;
@@ -78,7 +94,7 @@ export async function runAlertDeliveryBatch(
     try {
       const rendered = await renderAlertDeliveryMessage(delivery);
       if ("configurationError" in rendered) {
-        const marked = await markAlertDeliveryConfigurationFailed({
+        const marked = await markAlertDeliveryPermanentFailed({
           deliveryId: delivery.id,
           workerId: input.workerId,
           claimedAttemptCount: delivery.attemptCount,
@@ -88,7 +104,7 @@ export async function runAlertDeliveryBatch(
         continue;
       }
 
-      const sent = await input.sender.send(rendered);
+      const sent = await sendRenderedMessage(input, rendered);
       const marked = await markAlertDeliverySent({
         deliveryId: delivery.id,
         workerId: input.workerId,
@@ -97,12 +113,31 @@ export async function runAlertDeliveryBatch(
       });
       if (marked?.status === "sent") result.sent += 1;
     } catch (error) {
+      if (
+        input.channel === "telegram" &&
+        isPermanentTelegramTransportError(error)
+      ) {
+        const marked = await markAlertDeliveryPermanentFailed({
+          deliveryId: delivery.id,
+          workerId: input.workerId,
+          claimedAttemptCount: delivery.attemptCount,
+          errorCode: error.code,
+          safeDescription: error.providerDescription
+        });
+        if (marked?.status === "failed") result.failed += 1;
+        continue;
+      }
+
       const marked = await markAlertDeliveryAttemptFailed({
         deliveryId: delivery.id,
         workerId: input.workerId,
         claimedAttemptCount: delivery.attemptCount,
         error,
-        maxAttempts: input.maxAttempts
+        maxAttempts: input.maxAttempts,
+        retryAfterSeconds:
+          error instanceof TelegramTransportError
+            ? error.retryAfterSeconds
+            : undefined
       });
       if (marked?.status === "failed") {
         result.failed += 1;
@@ -113,6 +148,19 @@ export async function runAlertDeliveryBatch(
   }
 
   return result;
+}
+
+async function sendRenderedMessage(
+  input: RunAlertDeliveryBatchInput,
+  rendered: AlertDeliveryMessage
+): Promise<{ providerMessageId: string }> {
+  if (input.channel === "telegram" && rendered.channel === "telegram") {
+    return input.sender.send(rendered);
+  }
+  if (input.channel === "email" && rendered.channel === "email") {
+    return input.sender.send(rendered);
+  }
+  throw new Error("Claimed alert delivery channel did not match the worker channel");
 }
 
 async function renderAlertDeliveryMessage(
