@@ -2772,6 +2772,167 @@ describeIfDatabase("postgres smoke", () => {
       client.release();
     }
   });
+
+  it("delivers Telegram alerts with provider retry and permanent-failure semantics", async () => {
+    const created = await createStore({
+      name: "Telegram Transport Store",
+      domain: "https://telegram-transport.example.com",
+      sitemapUrl: "https://telegram-transport.example.com/sitemap.xml",
+      feedUrl: "https://telegram-transport.example.com/feed.xml",
+      categoryUrls: ["https://telegram-transport.example.com/collections/all"]
+    });
+    await updateAlertPreferences(created.store.id, { telegramEnabled: true });
+    const client = await (await import("./client")).getPool().connect();
+    const botToken = "123456:postgres-smoke-secret";
+
+    try {
+      await upsertTelegramDestination(created.store.id, {
+        chatId: "-1007654321000",
+        threadId: 15,
+        displayName: "Transport Smoke",
+        enabled: true
+      });
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent', sent_at = clock_timestamp(), updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
+
+      const { createTelegramTransport, runAlertDeliveryBatch } = await import("@eim/worker");
+      const successful = await createPendingDelivery(
+        client,
+        created.store.id,
+        "telegram-transport-success",
+        "telegram"
+      );
+      await markOtherChannelSent(client, successful.incidentEventId, "telegram");
+      const successBatch = await runAlertDeliveryBatch({
+        channel: "telegram",
+        workerId: "telegram-success-worker",
+        sender: createTelegramTransport({
+          botToken,
+          fetchImpl: async () =>
+            new Response(JSON.stringify({ ok: true, result: { message_id: 901 } }), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            })
+        })
+      });
+      expect(successBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+      await expectAlertDeliveryState(client, successful.id, {
+        status: "sent",
+        providerMessageId: "-1007654321000:901",
+        lastError: null
+      });
+
+      const transient = await createPendingDelivery(
+        client,
+        created.store.id,
+        "telegram-transport-transient",
+        "telegram"
+      );
+      await markOtherChannelSent(client, transient.incidentEventId, "telegram");
+      const transientBatch = await runAlertDeliveryBatch({
+        channel: "telegram",
+        workerId: "telegram-transient-worker",
+        sender: createTelegramTransport({
+          botToken,
+          fetchImpl: async () =>
+            new Response(JSON.stringify({ ok: false, description: "Telegram unavailable" }), {
+              status: 500
+            })
+        })
+      });
+      expect(transientBatch).toEqual({ claimed: 1, sent: 0, retried: 1, failed: 0 });
+      await expectAlertDeliveryState(client, transient.id, {
+        status: "pending",
+        providerMessageId: null,
+        lastError: "telegram_server_error: Telegram unavailable"
+      });
+
+      const rateLimited = await createPendingDelivery(
+        client,
+        created.store.id,
+        "telegram-transport-rate-limit",
+        "telegram"
+      );
+      await markOtherChannelSent(client, rateLimited.incidentEventId, "telegram");
+      const rateLimitBatch = await runAlertDeliveryBatch({
+        channel: "telegram",
+        workerId: "telegram-rate-limit-worker",
+        sender: createTelegramTransport({
+          botToken,
+          fetchImpl: async () =>
+            new Response(
+              JSON.stringify({
+                ok: false,
+                error_code: 429,
+                description: "Too Many Requests",
+                parameters: { retry_after: 120 }
+              }),
+              { status: 429 }
+            )
+        })
+      });
+      expect(rateLimitBatch).toEqual({ claimed: 1, sent: 0, retried: 1, failed: 0 });
+      const retryAfter = await client.query<{
+        delay_seconds: string;
+        status: string;
+      }>(
+        `
+          SELECT
+            EXTRACT(EPOCH FROM (next_attempt_at - updated_at))::text AS delay_seconds,
+            status::text
+          FROM alert_deliveries
+          WHERE id = $1
+        `,
+        [rateLimited.id]
+      );
+      expect(retryAfter.rows[0].status).toBe("pending");
+      expect(Number(retryAfter.rows[0].delay_seconds)).toBeGreaterThanOrEqual(119.9);
+      expect(Number(retryAfter.rows[0].delay_seconds)).toBeLessThanOrEqual(120.1);
+
+      const permanent = await createPendingDelivery(
+        client,
+        created.store.id,
+        "telegram-transport-permanent",
+        "telegram"
+      );
+      await markOtherChannelSent(client, permanent.incidentEventId, "telegram");
+      const permanentBatch = await runAlertDeliveryBatch({
+        channel: "telegram",
+        workerId: "telegram-permanent-worker",
+        sender: createTelegramTransport({
+          botToken,
+          fetchImpl: async () =>
+            new Response(
+              JSON.stringify({
+                ok: false,
+                error_code: 400,
+                description: "Bad Request: chat not found"
+              }),
+              { status: 400 }
+            )
+        })
+      });
+      expect(permanentBatch).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+      await expectAlertDeliveryState(client, permanent.id, {
+        status: "failed",
+        providerMessageId: null,
+        lastError: "telegram_chat_not_found: Bad Request: chat not found"
+      });
+
+      const persistedErrors = await client.query<{ last_error: string | null }>(
+        "SELECT last_error FROM alert_deliveries WHERE id = ANY($1::uuid[])",
+        [[transient.id, rateLimited.id, permanent.id]]
+      );
+      expect(persistedErrors.rows.every((row) => !row.last_error?.includes(botToken))).toBe(true);
+    } finally {
+      client.release();
+    }
+  });
 });
 
 async function createPendingDelivery(
@@ -2833,6 +2994,34 @@ async function markOtherChannelSent(
     `,
     [incidentEventId, retainedChannel]
   );
+}
+
+async function expectAlertDeliveryState(
+  client: pg.PoolClient,
+  deliveryId: string,
+  expected: {
+    status: string;
+    providerMessageId: string | null;
+    lastError: string | null;
+  }
+): Promise<void> {
+  const result = await client.query<{
+    status: string;
+    provider_message_id: string | null;
+    last_error: string | null;
+  }>(
+    `
+      SELECT status::text, provider_message_id, last_error
+      FROM alert_deliveries
+      WHERE id = $1
+    `,
+    [deliveryId]
+  );
+  expect(result.rows[0]).toEqual({
+    status: expected.status,
+    provider_message_id: expected.providerMessageId,
+    last_error: expected.lastError
+  });
 }
 
 async function insertFeedObservation(
