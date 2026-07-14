@@ -119,6 +119,15 @@ export const alertPreferencesSchema = z
 
 export const updateAlertPreferencesInputSchema = alertPreferencesSchema.partial().strict();
 
+export const telegramDestinationInputSchema = z
+  .object({
+    chatId: z.string().trim().min(1).max(128),
+    threadId: z.number().int().positive().nullable(),
+    displayName: z.string().trim().min(1).max(120).nullable(),
+    enabled: z.boolean()
+  })
+  .strict();
+
 const maintenanceWindowDateSchema = z.string().datetime({ offset: true });
 
 export const createMaintenanceWindowInputSchema = z
@@ -241,6 +250,7 @@ export type StoreThresholds = z.infer<typeof storeThresholdsSchema>;
 export type UpdateStoreThresholdsInput = z.infer<typeof updateStoreThresholdsInputSchema>;
 export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;
 export type UpdateAlertPreferencesInput = z.infer<typeof updateAlertPreferencesInputSchema>;
+export type TelegramDestinationInput = z.infer<typeof telegramDestinationInputSchema>;
 export type CreateMaintenanceWindowInput = z.infer<typeof createMaintenanceWindowInputSchema>;
 
 export const defaultStoreThresholds: StoreThresholds = {

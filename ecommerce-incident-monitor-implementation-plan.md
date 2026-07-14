@@ -437,6 +437,7 @@ Acceptance criteria:
 
 - Milestone 7.1 applies ordered SQL migrations through a checksum-verified, advisory-lock-protected runner and persists alert delivery attempts without changing incident lifecycle decisions.
 - Milestone 7.2 freezes one versioned canonical payload per incident lifecycle event before channel delivery. Email and Telegram intents reference the same immutable event payload, retries never rebuild it from current incident state, and provider senders receive rendered channel messages rather than incident-domain records.
+- Milestone 7.3 stores one secret-free Telegram destination per store, exposes strict GET/PUT/DELETE configuration endpoints, resolves enabled destinations before fake transport invocation, and terminally fails missing or disabled destination configuration without consuming provider retry attempts.
 - Pending email and Telegram intents can be claimed independently; active leases are not double-claimed, expired leases are reclaimed, stale workers are fenced, and retry delay follows 1, 5, 15, and 60 minute steps before the configured maximum attempts.
 - The first worker slice uses an injected fake sender only; it does not call Telegram, email, or any provider API.
 - Critical confirmed incidents send one alert.
@@ -447,6 +448,10 @@ Acceptance criteria:
 Milestone 7.1 durable delivery worker core is complete and operationally verified. The ordered migration runner applies checksum-verified migrations under a PostgreSQL advisory lock, and the clean PostgreSQL CI suite verifies pending-delivery claim, lease/reclaim, attempt fencing, deterministic retry scheduling, terminal failure, per-channel isolation, and fake-sender batch handling.
 
 Milestone 7.2 immutable alert payload and pure renderer is complete and operationally verified. Migration `0003_alert_event_payloads.sql` stores one canonical `v1` payload per incident event, delivery claims load that frozen payload, and the worker renders provider-ready Telegram or email content before calling its injected sender. The Telegram renderer distinguishes business incidents, source-health failures, worsening, and recovery; escapes HTML; limits samples; and safely truncates long output. Clean GitHub CI passed all 22 PostgreSQL smoke tests, including migration replay, payload immutability, shared per-channel event payloads, retry reuse, lease fencing, and rendered fake-sender delivery.
+
+Milestone 7.3 Telegram destination configuration is code-complete. Migration `0004_telegram_destinations.sql` stores chat and optional topic identifiers without bot secrets; updates are concurrency-safe and DELETE soft-disables the destination with audit timestamps. The worker builds a destination-aware `TelegramSendRequest` for its injected sender, while missing or disabled configuration produces a fenced terminal delivery failure. `TELEGRAM_BOT_TOKEN` is isolated behind an environment-only configuration boundary with token-redaction helpers. Operational sign-off remains pending until the updated PostgreSQL smoke suite passes in clean GitHub CI.
+
+Milestone 7 hardening backlog: classify an immutable payload that is missing, malformed, or unsupported after claim as a permanent delivery failure (`payload_missing`, `payload_validation_failed`, or `unsupported_payload_version`) so the lease does not wait for expiry without an immediate diagnostic.
 
 ### Milestone 8: Dashboard
 

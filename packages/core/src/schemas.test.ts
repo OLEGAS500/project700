@@ -3,6 +3,7 @@ import {
   createSnapshotInputSchema,
   createStoreInputSchema,
   sourceCheckStatusSchema,
+  telegramDestinationInputSchema,
   updateAlertPreferencesInputSchema,
   updateStoreThresholdsInputSchema
 } from "./schemas";
@@ -86,5 +87,38 @@ describe("core schemas", () => {
       updateAlertPreferencesInputSchema.safeParse({ worseningAffectedCountPercent: 1.1 }).success
     ).toBe(false);
     expect(updateAlertPreferencesInputSchema.safeParse({ smsEnabled: true }).success).toBe(false);
+  });
+
+  it("strictly validates Telegram destinations without accepting secrets", () => {
+    expect(
+      telegramDestinationInputSchema.parse({
+        chatId: "-1001234567890",
+        threadId: 42,
+        displayName: "SEO Alerts",
+        enabled: true
+      })
+    ).toEqual({
+      chatId: "-1001234567890",
+      threadId: 42,
+      displayName: "SEO Alerts",
+      enabled: true
+    });
+    expect(
+      telegramDestinationInputSchema.safeParse({
+        chatId: "-1001234567890",
+        threadId: 0,
+        displayName: null,
+        enabled: true
+      }).success
+    ).toBe(false);
+    expect(
+      telegramDestinationInputSchema.safeParse({
+        chatId: "-1001234567890",
+        threadId: null,
+        displayName: null,
+        enabled: true,
+        botToken: "must-not-be-accepted"
+      }).success
+    ).toBe(false);
   });
 });

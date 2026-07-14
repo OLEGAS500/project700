@@ -73,6 +73,17 @@ export type MarkAlertDeliveryAttemptFailedInput = {
   maxAttempts?: number;
 };
 
+export type AlertDeliveryConfigurationErrorCode =
+  | "telegram_destination_missing"
+  | "telegram_destination_disabled";
+
+export type MarkAlertDeliveryConfigurationFailedInput = {
+  deliveryId: string;
+  workerId: string;
+  claimedAttemptCount: number;
+  errorCode: AlertDeliveryConfigurationErrorCode;
+};
+
 const retryDelaysSeconds = [60, 300, 900, 3_600] as const;
 
 export async function claimDueAlertDeliveries(
@@ -216,6 +227,43 @@ export async function markAlertDeliveryAttemptFailed(
         AND status = 'failed'
     `,
     [input.deliveryId, input.claimedAttemptCount]
+  );
+  return existing.rows[0] ? mapAlertDeliveryJobRecord(existing.rows[0]) : null;
+}
+
+export async function markAlertDeliveryConfigurationFailed(
+  input: MarkAlertDeliveryConfigurationFailedInput
+): Promise<AlertDeliveryJobRecord | null> {
+  const result = await getPool().query<AlertDeliveryJobRow>(
+    `
+      UPDATE alert_deliveries
+      SET status = 'failed',
+          last_error = $4,
+          failed_at = clock_timestamp(),
+          locked_at = NULL,
+          locked_by = NULL,
+          lease_expires_at = NULL,
+          updated_at = clock_timestamp()
+      WHERE id = $1
+        AND status = 'pending'
+        AND locked_by = $2
+        AND attempt_count = $3
+      RETURNING *
+    `,
+    [input.deliveryId, input.workerId, input.claimedAttemptCount, input.errorCode]
+  );
+  if (result.rows[0]) return mapAlertDeliveryJobRecord(result.rows[0]);
+
+  const existing = await getPool().query<AlertDeliveryJobRow>(
+    `
+      SELECT *
+      FROM alert_deliveries
+      WHERE id = $1
+        AND status = 'failed'
+        AND attempt_count = $2
+        AND last_error = $3
+    `,
+    [input.deliveryId, input.claimedAttemptCount, input.errorCode]
   );
   return existing.rows[0] ? mapAlertDeliveryJobRecord(existing.rows[0]) : null;
 }
