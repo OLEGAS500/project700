@@ -427,6 +427,7 @@ Acceptance criteria:
 
 Build:
 
+- Durable per-channel delivery worker with PostgreSQL leases, retry scheduling, fencing, and injected senders before connecting a provider.
 - Email alerts.
 - Telegram alerts.
 - Alert rendering with before/after, confidence, evidence, and sample products.
@@ -434,6 +435,9 @@ Build:
 
 Acceptance criteria:
 
+- Milestone 7.1 applies ordered SQL migrations through a checksum-verified, advisory-lock-protected runner and persists alert delivery attempts without changing incident lifecycle decisions.
+- Pending email and Telegram intents can be claimed independently; active leases are not double-claimed, expired leases are reclaimed, stale workers are fenced, and retry delay follows 1, 5, 15, and 60 minute steps before the configured maximum attempts.
+- The first worker slice uses an injected fake sender only; it does not call Telegram, email, or any provider API.
 - Critical confirmed incidents send one alert.
 - Alerts include store, affected source, before/after metrics, first detected time, confidence, evidence, and samples.
 - Source health alerts use different wording from business incidents.

@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -29,13 +27,10 @@ describeIfDatabase("sitemap postgres vertical slice", () => {
     dbUrlWithSchema = withSearchPath(testDatabaseUrl!, schemaName);
     process.env.DATABASE_URL = dbUrlWithSchema;
 
-    const migration = await readFile(
-      path.join(process.cwd(), "packages/db/migrations/0001_initial.sql"),
-      "utf8"
-    );
     const migrator = new Client({ connectionString: dbUrlWithSchema });
     await migrator.connect();
-    await migrator.query(migration);
+    const { applyMigrations } = await import("@eim/db");
+    await applyMigrations(migrator);
     await migrator.end();
   });
 
