@@ -6,7 +6,8 @@ import {
   markAlertDeliveryPermanentFailed,
   markAlertDeliverySent,
   type AlertDeliveryConfigurationErrorCode,
-  type AlertDeliveryChannel
+  type AlertDeliveryChannel,
+  type ClaimedAlertDelivery
 } from "@eim/db";
 import {
   renderEmailAlert,
@@ -100,6 +101,17 @@ export async function runAlertDeliveryBatch(
 
   for (const delivery of deliveries) {
     try {
+      if (delivery.payloadStatus !== "valid") {
+        const marked = await markAlertDeliveryPermanentFailed({
+          deliveryId: delivery.id,
+          workerId: input.workerId,
+          claimedAttemptCount: delivery.attemptCount,
+          errorCode: delivery.payloadStatus
+        });
+        if (marked?.status === "failed") result.failed += 1;
+        continue;
+      }
+
       const rendered = await renderAlertDeliveryMessage(delivery);
       if ("configurationError" in rendered) {
         const marked = await markAlertDeliveryPermanentFailed({
@@ -183,7 +195,7 @@ async function sendRenderedMessage(
 }
 
 async function renderAlertDeliveryMessage(
-  delivery: Awaited<ReturnType<typeof claimDueAlertDeliveries>>[number]
+  delivery: Extract<ClaimedAlertDelivery, { payloadStatus: "valid" }>
 ): Promise<
   | AlertDeliveryMessage
   | { configurationError: AlertDeliveryConfigurationErrorCode }

@@ -1,6 +1,9 @@
 import type { AlertType, CanonicalAlertPayload } from "@eim/core";
 import type pg from "pg";
-import { getAlertEventPayloadsByEventIds } from "./alert-event-payloads";
+import {
+  getDeliveryAlertPayloadStatesByEventIds,
+  type DeliveryAlertPayloadState
+} from "./alert-event-payloads";
 import { getPool } from "./client";
 
 export type AlertDeliveryChannel = "email" | "telegram";
@@ -26,19 +29,33 @@ type AlertDeliveryJobRow = {
   updated_at: Date;
 };
 
-export type ClaimedAlertDelivery = {
+type ClaimedAlertDeliveryBase = {
   id: string;
   incidentId: string;
   storeId: string;
   incidentEventId: string;
   channel: AlertDeliveryChannel;
   alertType: AlertType;
-  payload: CanonicalAlertPayload;
   attemptCount: number;
   lockedBy: string;
   lockedAt: string;
   leaseExpiresAt: string;
 };
+
+export type AlertDeliveryPayloadFailureCode =
+  | "payload_missing"
+  | "payload_validation_failed"
+  | "unsupported_payload_version";
+
+export type ClaimedAlertDelivery =
+  | (ClaimedAlertDeliveryBase & {
+      payloadStatus: "valid";
+      payload: CanonicalAlertPayload;
+    })
+  | (ClaimedAlertDeliveryBase & {
+      payloadStatus: AlertDeliveryPayloadFailureCode;
+      payload: null;
+    });
 
 export type AlertDeliveryJobRecord = {
   id: string;
@@ -82,6 +99,7 @@ export type AlertDeliveryConfigurationErrorCode =
 
 export type AlertDeliveryPermanentErrorCode =
   | AlertDeliveryConfigurationErrorCode
+  | AlertDeliveryPayloadFailureCode
   | "resend_validation_error"
   | "resend_authentication_failed"
   | "resend_permission_denied"
@@ -146,11 +164,6 @@ export async function claimDueAlertDeliveries(
         FROM alert_deliveries
         WHERE status = 'pending'
           AND channel = $2
-          AND EXISTS (
-            SELECT 1
-            FROM alert_event_payloads
-            WHERE alert_event_payloads.incident_event_id = alert_deliveries.incident_event_id
-          )
           AND next_attempt_at <= clock_timestamp()
           AND attempt_count < $5
           AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
@@ -163,18 +176,17 @@ export async function claimDueAlertDeliveries(
     [limit, input.channel, input.workerId, leaseSeconds, maxAttempts]
   );
 
-  const payloads = await getAlertEventPayloadsByEventIds(
+  const payloads = await getDeliveryAlertPayloadStatesByEventIds(
     result.rows.map((row) => row.incident_event_id),
     getPool()
   );
 
-  return result.rows.map((row) => {
-    const payload = payloads.get(row.incident_event_id);
-    if (!payload) {
-      throw new Error(`Claimed alert delivery ${row.id} is missing its immutable payload`);
-    }
-    return mapClaimedAlertDelivery(row, payload.payload);
-  });
+  return result.rows.map((row) =>
+    mapClaimedAlertDelivery(
+      row,
+      payloads.get(row.incident_event_id) ?? { status: "payload_missing" }
+    )
+  );
 }
 
 export async function markAlertDeliverySent(
@@ -296,25 +308,30 @@ export const markAlertDeliveryConfigurationFailed = markAlertDeliveryPermanentFa
 
 function mapClaimedAlertDelivery(
   row: AlertDeliveryJobRow,
-  payload: CanonicalAlertPayload
+  payload: DeliveryAlertPayloadState | { status: "payload_missing" }
 ): ClaimedAlertDelivery {
   if (!row.locked_by || !row.locked_at || !row.lease_expires_at) {
     throw new Error(`Claimed alert delivery ${row.id} is missing lease metadata`);
   }
 
-  return {
+  const base: ClaimedAlertDeliveryBase = {
     id: row.id,
     incidentId: row.incident_id,
     storeId: row.store_id,
     incidentEventId: row.incident_event_id,
     channel: row.channel,
     alertType: row.alert_type,
-    payload,
     attemptCount: row.attempt_count,
     lockedBy: row.locked_by,
     lockedAt: row.locked_at.toISOString(),
     leaseExpiresAt: row.lease_expires_at.toISOString()
   };
+
+  if (payload.status !== "valid") {
+    return { ...base, payloadStatus: payload.status, payload: null };
+  }
+
+  return { ...base, payloadStatus: "valid", payload: payload.payload };
 }
 
 function mapAlertDeliveryJobRecord(row: AlertDeliveryJobRow): AlertDeliveryJobRecord {
