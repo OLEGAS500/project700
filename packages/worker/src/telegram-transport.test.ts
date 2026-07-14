@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TelegramSendRequest } from "./alert-deliveries";
 import {
   createTelegramTransport,
+  TelegramTransportConfigurationError,
   TelegramTransportError,
   type TelegramFetch
 } from "./telegram-transport";
@@ -9,6 +10,20 @@ import {
 const botToken = "123456:top-secret";
 
 describe("Telegram transport", () => {
+  it.each([
+    ["", undefined, "telegram_bot_token_invalid"],
+    ["   ", undefined, "telegram_bot_token_invalid"],
+    [botToken, 0, "telegram_timeout_invalid"],
+    [botToken, Number.NaN, "telegram_timeout_invalid"]
+  ] as const)("rejects invalid factory configuration", (configuredToken, timeoutMs, code) => {
+    expect(() =>
+      createTelegramTransport({ botToken: configuredToken, timeoutMs })
+    ).toThrow(TelegramTransportConfigurationError);
+    expect(() =>
+      createTelegramTransport({ botToken: configuredToken, timeoutMs })
+    ).toThrow(code);
+  });
+
   it("sends HTML content and returns a stable provider message ID", async () => {
     let body: Record<string, unknown> | undefined;
     let calls = 0;

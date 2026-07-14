@@ -25,6 +25,13 @@ export class TelegramTransportError extends Error {
   }
 }
 
+export class TelegramTransportConfigurationError extends Error {
+  constructor(readonly code: "telegram_bot_token_invalid" | "telegram_timeout_invalid") {
+    super(code);
+    this.name = "TelegramTransportConfigurationError";
+  }
+}
+
 export function isPermanentTelegramTransportError(
   error: unknown
 ): error is TelegramTransportError & {
@@ -69,8 +76,16 @@ type TelegramResponse = {
 export function createTelegramTransport(
   input: CreateTelegramTransportInput
 ): TelegramTransport {
+  const botToken = input.botToken.trim();
+  if (!botToken) {
+    throw new TelegramTransportConfigurationError("telegram_bot_token_invalid");
+  }
+
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = input.timeoutMs ?? 10_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TelegramTransportConfigurationError("telegram_timeout_invalid");
+  }
 
   return {
     async send(request) {
@@ -80,7 +95,7 @@ export function createTelegramTransport(
 
       try {
         response = await fetchImpl(
-          `https://api.telegram.org/bot${input.botToken}/sendMessage`,
+          `https://api.telegram.org/bot${botToken}/sendMessage`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -103,7 +118,7 @@ export function createTelegramTransport(
         throw new TelegramTransportError(
           "telegram_network_error",
           true,
-          sanitizeDescription(redactTelegramBotToken(error, input.botToken))
+          sanitizeDescription(redactTelegramBotToken(error, botToken))
         );
       } finally {
         clearTimeout(timeout);
@@ -113,12 +128,12 @@ export function createTelegramTransport(
         throw new TelegramTransportError(
           "telegram_server_error",
           true,
-          await readOptionalDescription(response, input.botToken)
+          await readOptionalDescription(response, botToken)
         );
       }
 
       if (response.status === 429) {
-        const body = await readOptionalTelegramResponse(response, input.botToken);
+        const body = await readOptionalTelegramResponse(response, botToken);
         throw new TelegramTransportError(
           "telegram_rate_limited",
           true,
@@ -127,18 +142,18 @@ export function createTelegramTransport(
         );
       }
 
-      const body = await readTelegramResponse(response, input.botToken);
+      const body = await readTelegramResponse(response, botToken);
       if (body.error_code === 429) {
         throw new TelegramTransportError(
           "telegram_rate_limited",
           true,
-          sanitizeDescription(body.description, input.botToken),
+          sanitizeDescription(body.description, botToken),
           normalizeRetryAfter(body.parameters?.retry_after)
         );
       }
 
       if (!response.ok || body.ok !== true) {
-        throw classifyPermanentError(response.status, body, input.botToken);
+        throw classifyPermanentError(response.status, body, botToken);
       }
 
       const messageId = body.result?.message_id;
