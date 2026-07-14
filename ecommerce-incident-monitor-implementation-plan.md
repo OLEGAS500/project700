@@ -446,7 +446,7 @@ Acceptance criteria:
 
 Milestone 7.1 durable delivery worker core is complete and operationally verified. The ordered migration runner applies checksum-verified migrations under a PostgreSQL advisory lock, and the clean PostgreSQL CI suite verifies pending-delivery claim, lease/reclaim, attempt fencing, deterministic retry scheduling, terminal failure, per-channel isolation, and fake-sender batch handling.
 
-Milestone 7.2 immutable alert payload and pure renderer is code-complete. Migration `0003_alert_event_payloads.sql` stores one canonical `v1` payload per incident event, delivery claims load that frozen payload, and the worker renders provider-ready Telegram or email content before calling its injected sender. The Telegram renderer distinguishes business incidents, source-health failures, worsening, and recovery; escapes HTML; limits samples; and safely truncates long output. Operational sign-off remains pending until the updated PostgreSQL smoke suite passes in clean GitHub CI.
+Milestone 7.2 immutable alert payload and pure renderer is complete and operationally verified. Migration `0003_alert_event_payloads.sql` stores one canonical `v1` payload per incident event, delivery claims load that frozen payload, and the worker renders provider-ready Telegram or email content before calling its injected sender. The Telegram renderer distinguishes business incidents, source-health failures, worsening, and recovery; escapes HTML; limits samples; and safely truncates long output. Clean GitHub CI passed all 22 PostgreSQL smoke tests, including migration replay, payload immutability, shared per-channel event payloads, retry reuse, lease fencing, and rendered fake-sender delivery.
 
 ### Milestone 8: Dashboard
 
