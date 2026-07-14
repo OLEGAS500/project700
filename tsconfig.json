@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@eim/core": ["packages/core/src/index.ts"],
+      "@eim/core/*": ["packages/core/src/*"],
+      "@eim/db": ["packages/db/src/index.ts"],
+      "@eim/db/*": ["packages/db/src/*"],
+      "@eim/worker": ["packages/worker/src/index.ts"],
+      "@eim/worker/*": ["packages/worker/src/*"]
+    }
+  },
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules"]
+}

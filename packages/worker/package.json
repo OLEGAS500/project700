@@ -1,0 +1,13 @@
+{
+  "name": "@eim/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@eim/core": "0.1.0",
+    "@eim/db": "0.1.0",
+    "cheerio": "^1.2.0",
+    "fast-xml-parser": "^5.10.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "ecommerce-incident-monitor",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @eim/web",
+    "build": "npm run build -w @eim/web",
+    "lint": "npm run lint -w @eim/web",
+    "test": "vitest run",
+    "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}
