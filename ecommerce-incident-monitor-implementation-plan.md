@@ -388,7 +388,7 @@ First vertical slice:
 - Catalog-drop confirmation transaction now lives in `packages/db/src/incidents/confirmation.ts` with one `withTransaction` boundary from candidate lock through terminal candidate update.
 - Feed source-health debounce, incident dedupe, failure evidence, and recovery evidence now live in `packages/db/src/incidents/source-health.ts`.
 - SEO regression sample compatibility, coverage gates, transition detection, grouped incident upsert, and affected URL signal samples now live in `packages/db/src/incidents/seo-regression.ts`.
-- Live PostgreSQL smoke has been run against a temporary embedded Postgres instance: migrations applied on a clean schema and `npm run test:postgres` passed with 18/18 tests.
+- Live PostgreSQL smoke has been run against a clean PostgreSQL service schema: migrations applied from scratch and `npm run test:postgres` passed with 19/19 tests.
 - Live PostgreSQL smoke fixed two real-DB issues: `baseline_metrics` now migrates before tables that reference it, and baseline recalculation uses the feed URL captured on each source check instead of the store's current feed URL.
 
 ### Milestone 6: Recovery Lifecycle And Noise Controls
@@ -623,4 +623,4 @@ npm run build
 ```
 
 Milestones that depend on database semantics are not operationally signed off until this CI job passes.
-Live PostgreSQL operational verification was completed successfully with 18/18 smoke tests passing. Future database changes must continue to pass the same PostgreSQL smoke suite before merge.
+Milestone 6 is complete and operationally verified. GitHub Actions passed the clean PostgreSQL suite with 19/19 smoke tests, covering recovery lifecycle, user actions, maintenance suppression, versioned thresholds, alert preferences, concurrent per-channel intent creation, historical preference capture, suppression precedence, and foreign-key integrity. Future database changes must continue to pass the same PostgreSQL smoke suite before merge.
