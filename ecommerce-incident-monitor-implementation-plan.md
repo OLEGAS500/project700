@@ -436,6 +436,7 @@ Build:
 Acceptance criteria:
 
 - Milestone 7.1 applies ordered SQL migrations through a checksum-verified, advisory-lock-protected runner and persists alert delivery attempts without changing incident lifecycle decisions.
+- Milestone 7.2 freezes one versioned canonical payload per incident lifecycle event before channel delivery. Email and Telegram intents reference the same immutable event payload, retries never rebuild it from current incident state, and provider senders receive rendered channel messages rather than incident-domain records.
 - Pending email and Telegram intents can be claimed independently; active leases are not double-claimed, expired leases are reclaimed, stale workers are fenced, and retry delay follows 1, 5, 15, and 60 minute steps before the configured maximum attempts.
 - The first worker slice uses an injected fake sender only; it does not call Telegram, email, or any provider API.
 - Critical confirmed incidents send one alert.
@@ -444,6 +445,8 @@ Acceptance criteria:
 - Recovery alerts are optional per store.
 
 Milestone 7.1 durable delivery worker core is complete and operationally verified. The ordered migration runner applies checksum-verified migrations under a PostgreSQL advisory lock, and the clean PostgreSQL CI suite verifies pending-delivery claim, lease/reclaim, attempt fencing, deterministic retry scheduling, terminal failure, per-channel isolation, and fake-sender batch handling.
+
+Milestone 7.2 immutable alert payload and pure renderer is code-complete. Migration `0003_alert_event_payloads.sql` stores one canonical `v1` payload per incident event, delivery claims load that frozen payload, and the worker renders provider-ready Telegram or email content before calling its injected sender. The Telegram renderer distinguishes business incidents, source-health failures, worsening, and recovery; escapes HTML; limits samples; and safely truncates long output. Operational sign-off remains pending until the updated PostgreSQL smoke suite passes in clean GitHub CI.
 
 ### Milestone 8: Dashboard
 

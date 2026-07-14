@@ -1,4 +1,5 @@
 export * from "./baseline";
+export * from "./alerts";
 export * from "./comparability";
 export * from "./incidents";
 export * from "./normalize";

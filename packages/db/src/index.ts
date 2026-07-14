@@ -1,4 +1,5 @@
 export * from "./alerts";
+export * from "./alert-event-payloads";
 export * from "./alert-preferences";
 export * from "./alert-delivery-jobs";
 export * from "./baselines";
