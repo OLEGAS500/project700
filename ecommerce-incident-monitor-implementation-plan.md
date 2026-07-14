@@ -471,7 +471,7 @@ Milestone 7.6.2 Resend email transport is complete and operationally verified. T
 
 Milestone 7.6.3 email run-once runtime is complete and operationally verified. `npm run worker:email` validates `DATABASE_URL` and the Resend sender boundary before its first claim, creates exactly one transport, processes exactly one email batch, writes only aggregate delivery counts, and closes the database pool for success, configuration failure, batch failure, and close failure. Clean GitHub CI passed the current PostgreSQL suite and full validation pipeline. It deliberately does not add a loop, scheduler, or live provider call to CI.
 
-Milestone 7.7 permanent payload failures is code-complete pending PostgreSQL CI verification. Claimed delivery intents now receive an explicit immutable payload state: missing, schema-invalid, and unsupported-version payloads are fenced terminal failures with safe stable codes, cleared leases, no sender invocation, and no retry; valid deliveries in the same batch continue normally.
+Milestone 7.7 permanent payload failures is complete and operationally verified. Claimed delivery intents now receive an explicit immutable payload state: missing, schema-invalid, and unsupported-version payloads are fenced terminal failures with safe stable codes, cleared leases, no sender invocation, and no retry; valid deliveries in the same batch continue normally. Clean GitHub CI passed the updated PostgreSQL smoke suite, including payload-state migration replay, fenced terminal failure after lease reclaim, lease cleanup, error redaction, and valid-delivery isolation within a batch.
 
 ### Milestone 8: Dashboard
 
