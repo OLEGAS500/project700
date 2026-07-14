@@ -443,6 +443,8 @@ Acceptance criteria:
 - Source health alerts use different wording from business incidents.
 - Recovery alerts are optional per store.
 
+Milestone 7.1 durable delivery worker core is complete and operationally verified. The ordered migration runner applies checksum-verified migrations under a PostgreSQL advisory lock, and the clean PostgreSQL CI suite verifies pending-delivery claim, lease/reclaim, attempt fencing, deterministic retry scheduling, terminal failure, per-channel isolation, and fake-sender batch handling.
+
 ### Milestone 8: Dashboard
 
 Build:
