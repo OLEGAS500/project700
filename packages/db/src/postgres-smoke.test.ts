@@ -2167,6 +2167,18 @@ describeIfDatabase("postgres smoke", () => {
     const client = await pool.connect();
 
     try {
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent',
+              sent_at = clock_timestamp(),
+              locked_at = NULL,
+              locked_by = NULL,
+              lease_expires_at = NULL,
+              updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
       const leaseDelivery = await createPendingDelivery(client, created.store.id, "lease", "email");
       await updateAlertPreferences(created.store.id, { mutedIncidentTypes: ["source_health"] });
       await createPendingDelivery(client, created.store.id, "suppressed", "email");
