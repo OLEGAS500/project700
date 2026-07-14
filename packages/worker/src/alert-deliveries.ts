@@ -19,6 +19,10 @@ import {
   isPermanentTelegramTransportError,
   TelegramTransportError
 } from "./telegram-transport";
+import {
+  isPermanentResendTransportError,
+  ResendTransportError
+} from "./resend-email-transport";
 
 export type TelegramSendRequest = {
   deliveryId: string;
@@ -131,6 +135,17 @@ export async function runAlertDeliveryBatch(
         if (marked?.status === "failed") result.failed += 1;
         continue;
       }
+      if (input.channel === "email" && isPermanentResendTransportError(error)) {
+        const marked = await markAlertDeliveryPermanentFailed({
+          deliveryId: delivery.id,
+          workerId: input.workerId,
+          claimedAttemptCount: delivery.attemptCount,
+          errorCode: error.code,
+          safeDescription: error.safeDescription
+        });
+        if (marked?.status === "failed") result.failed += 1;
+        continue;
+      }
 
       const marked = await markAlertDeliveryAttemptFailed({
         deliveryId: delivery.id,
@@ -139,7 +154,7 @@ export async function runAlertDeliveryBatch(
         error,
         maxAttempts: input.maxAttempts,
         retryAfterSeconds:
-          error instanceof TelegramTransportError
+          error instanceof TelegramTransportError || error instanceof ResendTransportError
             ? error.retryAfterSeconds
             : undefined
       });

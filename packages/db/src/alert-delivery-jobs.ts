@@ -82,6 +82,15 @@ export type AlertDeliveryConfigurationErrorCode =
 
 export type AlertDeliveryPermanentErrorCode =
   | AlertDeliveryConfigurationErrorCode
+  | "resend_validation_error"
+  | "resend_authentication_failed"
+  | "resend_permission_denied"
+  | "resend_invalid_from_address"
+  | "resend_invalid_idempotency_key"
+  | "resend_invalid_idempotent_request"
+  | "resend_quota_exceeded"
+  | "resend_security_error"
+  | "resend_response_invalid"
   | "telegram_bad_request"
   | "telegram_unauthorized"
   | "telegram_forbidden"

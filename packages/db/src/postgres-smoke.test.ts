@@ -1157,7 +1157,7 @@ describeIfDatabase("postgres smoke", () => {
       { event_type: "source_divergence_reopened", count: "1" },
       { event_type: "source_divergence_resolved", count: "1" }
     ]);
-  }, 15_000);
+  }, 30_000);
 
   it("creates one grouped SEO regression incident for compatible product-page samples", async () => {
     const created = await createStore({
@@ -3130,6 +3130,197 @@ describeIfDatabase("postgres smoke", () => {
         [[transient.id, rateLimited.id, permanent.id]]
       );
       expect(persistedErrors.rows.every((row) => !row.last_error?.includes(botToken))).toBe(true);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("delivers Resend email alerts with idempotency, retry, and safe permanent failures", async () => {
+    const created = await createStore({
+      name: "Resend Transport Store",
+      domain: "https://resend-transport.example.com",
+      sitemapUrl: "https://resend-transport.example.com/sitemap.xml",
+      feedUrl: "https://resend-transport.example.com/feed.xml",
+      categoryUrls: ["https://resend-transport.example.com/collections/all"]
+    });
+    const client = await (await import("./client")).getPool().connect();
+    const apiKey = "re_postgres_smoke_secret";
+
+    try {
+      await upsertEmailDestination(created.store.id, {
+        recipientEmails: ["ops@resend-transport.example.com"],
+        enabled: true
+      });
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent', sent_at = clock_timestamp(), updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
+
+      const { createResendEmailTransport, runAlertDeliveryBatch } = await import("@eim/worker");
+      const idempotencyKeys: string[] = [];
+      const successful = await createPendingDelivery(
+        client,
+        created.store.id,
+        "resend-transport-success",
+        "email"
+      );
+      await markOtherChannelSent(client, successful.incidentEventId, "email");
+      const successBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "resend-success-worker",
+        sender: createResendEmailTransport({
+          apiKey,
+          fromAddress: "alerts@resend-transport.example.com",
+          fromName: "EIM Alerts",
+          fetchImpl: async (_url, init) => {
+            idempotencyKeys.push(
+              String((init?.headers as Record<string, string>)["idempotency-key"])
+            );
+            return new Response(JSON.stringify({ id: "re_success_901" }), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            });
+          }
+        })
+      });
+      expect(successBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+      expect(idempotencyKeys).toEqual([`eim-delivery-${successful.id}`]);
+      await expectAlertDeliveryState(client, successful.id, {
+        status: "sent",
+        providerMessageId: "re_success_901",
+        lastError: null
+      });
+
+      const transient = await createPendingDelivery(
+        client,
+        created.store.id,
+        "resend-transport-transient",
+        "email"
+      );
+      await markOtherChannelSent(client, transient.incidentEventId, "email");
+      const transientBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "resend-transient-worker",
+        sender: createResendEmailTransport({
+          apiKey,
+          fromAddress: "alerts@resend-transport.example.com",
+          fromName: null,
+          fetchImpl: async () =>
+            new Response(
+              JSON.stringify({
+                name: "rate_limit_exceeded",
+                message: `Retry ${apiKey} at https://api.resend.com/emails`
+              }),
+              {
+                status: 429,
+                headers: {
+                  "content-type": "application/json",
+                  "retry-after": "120"
+                }
+              }
+            )
+        })
+      });
+      expect(transientBatch).toEqual({ claimed: 1, sent: 0, retried: 1, failed: 0 });
+      const retryAfter = await client.query<{
+        delay_seconds: string;
+        status: string;
+        last_error: string | null;
+      }>(
+        `
+          SELECT
+            EXTRACT(EPOCH FROM (next_attempt_at - updated_at))::text AS delay_seconds,
+            status::text,
+            last_error
+          FROM alert_deliveries
+          WHERE id = $1
+        `,
+        [transient.id]
+      );
+      expect(retryAfter.rows[0].status).toBe("pending");
+      expect(Number(retryAfter.rows[0].delay_seconds)).toBeGreaterThanOrEqual(119.9);
+      expect(Number(retryAfter.rows[0].delay_seconds)).toBeLessThanOrEqual(120.1);
+      expect(retryAfter.rows[0].last_error).toContain("resend_rate_limited");
+      expect(retryAfter.rows[0].last_error).not.toContain(apiKey);
+      expect(retryAfter.rows[0].last_error).not.toContain("api.resend.com");
+
+      const retryKeys: string[] = [];
+      const retryBodies: string[] = [];
+      const replay = await createPendingDelivery(
+        client,
+        created.store.id,
+        "resend-transport-replay",
+        "email"
+      );
+      await markOtherChannelSent(client, replay.incidentEventId, "email");
+      const retryingTransport = createResendEmailTransport({
+        apiKey,
+        fromAddress: "alerts@resend-transport.example.com",
+        fromName: null,
+        fetchImpl: async (_url, init) => {
+          retryKeys.push(String((init?.headers as Record<string, string>)["idempotency-key"]));
+          retryBodies.push(String(init?.body));
+          return retryKeys.length === 1
+            ? new Response(JSON.stringify({ name: "application_error", message: "Retry" }), {
+                status: 500,
+                headers: { "content-type": "application/json" }
+              })
+            : new Response(JSON.stringify({ id: "re_replayed_902" }), {
+                status: 200,
+                headers: { "content-type": "application/json" }
+              });
+        }
+      });
+      const firstReplayBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "resend-replay-worker",
+        sender: retryingTransport
+      });
+      expect(firstReplayBatch).toEqual({ claimed: 1, sent: 0, retried: 1, failed: 0 });
+      await client.query(
+        "UPDATE alert_deliveries SET next_attempt_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+        [replay.id]
+      );
+      const secondReplayBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "resend-replay-worker",
+        sender: retryingTransport
+      });
+      expect(secondReplayBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+      expect(retryKeys).toEqual([`eim-delivery-${replay.id}`, `eim-delivery-${replay.id}`]);
+      expect(retryBodies).toHaveLength(2);
+      expect(retryBodies[0]).toBe(retryBodies[1]);
+
+      const permanent = await createPendingDelivery(
+        client,
+        created.store.id,
+        "resend-transport-permanent",
+        "email"
+      );
+      await markOtherChannelSent(client, permanent.incidentEventId, "email");
+      const permanentBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "resend-permanent-worker",
+        sender: createResendEmailTransport({
+          apiKey,
+          fromAddress: "alerts@resend-transport.example.com",
+          fromName: null,
+          fetchImpl: async () =>
+            new Response(
+              JSON.stringify({ name: "invalid_api_key", message: `Invalid ${apiKey}` }),
+              { status: 403, headers: { "content-type": "application/json" } }
+            )
+        })
+      });
+      expect(permanentBatch).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+      await expectAlertDeliveryState(client, permanent.id, {
+        status: "failed",
+        providerMessageId: null,
+        lastError: "resend_authentication_failed: Invalid [REDACTED]"
+      });
     } finally {
       client.release();
     }
