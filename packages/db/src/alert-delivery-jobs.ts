@@ -1,4 +1,6 @@
+import type { AlertType, CanonicalAlertPayload } from "@eim/core";
 import type pg from "pg";
+import { getAlertEventPayloadsByEventIds } from "./alert-event-payloads";
 import { getPool } from "./client";
 
 export type AlertDeliveryChannel = "email" | "telegram";
@@ -10,7 +12,7 @@ type AlertDeliveryJobRow = {
   store_id: string;
   incident_event_id: string;
   channel: AlertDeliveryChannel;
-  alert_type: "incident_opened" | "incident_worsened" | "incident_resolved";
+  alert_type: AlertType;
   status: AlertDeliveryJobStatus;
   attempt_count: number;
   locked_at: Date | null;
@@ -30,7 +32,8 @@ export type ClaimedAlertDelivery = {
   storeId: string;
   incidentEventId: string;
   channel: AlertDeliveryChannel;
-  alertType: "incident_opened" | "incident_worsened" | "incident_resolved";
+  alertType: AlertType;
+  payload: CanonicalAlertPayload;
   attemptCount: number;
   lockedBy: string;
   lockedAt: string;
@@ -110,6 +113,11 @@ export async function claimDueAlertDeliveries(
         FROM alert_deliveries
         WHERE status = 'pending'
           AND channel = $2
+          AND EXISTS (
+            SELECT 1
+            FROM alert_event_payloads
+            WHERE alert_event_payloads.incident_event_id = alert_deliveries.incident_event_id
+          )
           AND next_attempt_at <= clock_timestamp()
           AND attempt_count < $5
           AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
@@ -122,7 +130,18 @@ export async function claimDueAlertDeliveries(
     [limit, input.channel, input.workerId, leaseSeconds, maxAttempts]
   );
 
-  return result.rows.map(mapClaimedAlertDelivery);
+  const payloads = await getAlertEventPayloadsByEventIds(
+    result.rows.map((row) => row.incident_event_id),
+    getPool()
+  );
+
+  return result.rows.map((row) => {
+    const payload = payloads.get(row.incident_event_id);
+    if (!payload) {
+      throw new Error(`Claimed alert delivery ${row.id} is missing its immutable payload`);
+    }
+    return mapClaimedAlertDelivery(row, payload.payload);
+  });
 }
 
 export async function markAlertDeliverySent(
@@ -201,7 +220,10 @@ export async function markAlertDeliveryAttemptFailed(
   return existing.rows[0] ? mapAlertDeliveryJobRecord(existing.rows[0]) : null;
 }
 
-function mapClaimedAlertDelivery(row: AlertDeliveryJobRow): ClaimedAlertDelivery {
+function mapClaimedAlertDelivery(
+  row: AlertDeliveryJobRow,
+  payload: CanonicalAlertPayload
+): ClaimedAlertDelivery {
   if (!row.locked_by || !row.locked_at || !row.lease_expires_at) {
     throw new Error(`Claimed alert delivery ${row.id} is missing lease metadata`);
   }
@@ -213,6 +235,7 @@ function mapClaimedAlertDelivery(row: AlertDeliveryJobRow): ClaimedAlertDelivery
     incidentEventId: row.incident_event_id,
     channel: row.channel,
     alertType: row.alert_type,
+    payload,
     attemptCount: row.attempt_count,
     lockedBy: row.locked_by,
     lockedAt: row.locked_at.toISOString(),

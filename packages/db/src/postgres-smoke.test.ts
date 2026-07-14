@@ -14,6 +14,7 @@ import {
   markAlertDeliveryAttemptFailed,
   markAlertDeliverySent
 } from "./alert-delivery-jobs";
+import { getAlertEventPayloadByEventId } from "./alert-event-payloads";
 import { getAlertPreferences, updateAlertPreferences } from "./alert-preferences";
 import { applyMigrations } from "./migrations";
 import {
@@ -149,10 +150,15 @@ describeIfDatabase("postgres smoke", () => {
     await migrator.end();
 
     expect(secondRun.applied).toEqual([]);
-    expect(secondRun.skipped).toEqual(["0001_initial.sql", "0002_alert_delivery_worker.sql"]);
+    expect(secondRun.skipped).toEqual([
+      "0001_initial.sql",
+      "0002_alert_delivery_worker.sql",
+      "0003_alert_event_payloads.sql"
+    ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
-      "0002_alert_delivery_worker.sql"
+      "0002_alert_delivery_worker.sql",
+      "0003_alert_event_payloads.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
@@ -2154,6 +2160,185 @@ describeIfDatabase("postgres smoke", () => {
     ]);
   });
 
+  it("freezes one canonical alert payload per event for both delivery channels", async () => {
+    const created = await createStore({
+      name: "Immutable Alert Payload Store",
+      domain: "https://immutable-alert-payload.example.com",
+      sitemapUrl: "https://immutable-alert-payload.example.com/sitemap.xml",
+      feedUrl: "https://immutable-alert-payload.example.com/feed.xml",
+      categoryUrls: ["https://immutable-alert-payload.example.com/collections/all"]
+    });
+    await updateAlertPreferences(created.store.id, {
+      telegramEnabled: true,
+      notifyOnRecovery: true
+    });
+    const client = await (await import("./client")).getPool().connect();
+
+    try {
+      const incident = await client.query<{ id: string }>(
+        `
+          INSERT INTO incidents (
+            store_id, severity, type, title, summary, likely_source,
+            confidence_score, evidence_json, affected_count, before_value,
+            after_value, status
+          )
+          VALUES (
+            $1, 'critical', 'catalog_drop', 'Catalog drop detected',
+            'The feed count fell below its active baseline.', 'feed', 0.86,
+            $2::jsonb, 210, 1000, 790, 'open'
+          )
+          RETURNING id
+        `,
+        [
+          created.store.id,
+          JSON.stringify([
+            "Category and sitemap counts remained stable.",
+            "The feed count dropped by 21 percent."
+          ])
+        ]
+      );
+      const incidentId = incident.rows[0].id;
+      const sampleItems = Array.from({ length: 12 }, (_, index) => ({
+        stableKey: `offer-${index}`,
+        offerId: `offer-${index}`,
+        url: `https://immutable-alert-payload.example.com/products/${index}`,
+        title: `Product ${index}`
+      }));
+      await client.query(
+        `
+          INSERT INTO incident_signals (
+            incident_id, source, metric, before_value, after_value,
+            change_abs, change_pct, sample_items_json
+          )
+          VALUES ($1, 'feed', 'product_count', 1000, 790, 210, 0.21, $2::jsonb)
+        `,
+        [incidentId, JSON.stringify(sampleItems)]
+      );
+      const openedEvent = await insertAlertTestEvent(
+        client,
+        incidentId,
+        created.store.id,
+        "immutable-opened"
+      );
+      await client.query(
+        "UPDATE incident_events SET metadata_json = $2::jsonb WHERE id = $1",
+        [openedEvent, JSON.stringify({ reason: "confirmation_matched_drop" })]
+      );
+
+      const openedDeliveries = await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId,
+        eventId: openedEvent,
+        alertType: "incident_opened"
+      });
+      await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId,
+        eventId: openedEvent,
+        alertType: "incident_opened"
+      });
+      const frozenPayload = await getAlertEventPayloadByEventId(openedEvent, client);
+      const payloadCount = await client.query<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM alert_event_payloads WHERE incident_event_id = $1",
+        [openedEvent]
+      );
+
+      expect(openedDeliveries).toHaveLength(2);
+      expect(new Set(openedDeliveries.map((delivery) => delivery.eventId))).toEqual(
+        new Set([openedEvent])
+      );
+      expect(Number(payloadCount.rows[0].count)).toBe(1);
+      expect(frozenPayload?.payload).toMatchObject({
+        version: "v1",
+        alertType: "incident_opened",
+        incident: {
+          title: "Catalog drop detected",
+          affectedCount: 210,
+          confidenceScore: 0.86
+        },
+        event: { id: openedEvent, reason: "confirmation_matched_drop" },
+        metrics: [
+          {
+            name: "product_count",
+            beforeValue: "1000",
+            afterValue: "790",
+            unit: "products"
+          }
+        ]
+      });
+      expect(frozenPayload?.payload.samples).toHaveLength(8);
+
+      await client.query(
+        `
+          UPDATE incidents
+          SET title = 'Mutated incident title',
+              summary = 'Mutated after the event.',
+              affected_count = 1,
+              confidence_score = 0.1
+          WHERE id = $1
+        `,
+        [incidentId]
+      );
+      await client.query(
+        "UPDATE incident_signals SET after_value = 999, sample_items_json = '[]'::jsonb WHERE incident_id = $1",
+        [incidentId]
+      );
+      await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId,
+        eventId: openedEvent,
+        alertType: "incident_opened"
+      });
+      await expect(
+        createAlertDeliveriesForIncidentEvent(client, {
+          incidentId,
+          eventId: openedEvent,
+          alertType: "incident_resolved"
+        })
+      ).rejects.toThrow("already exists with different identity");
+      await expect(getAlertEventPayloadByEventId(openedEvent, client)).resolves.toEqual(
+        frozenPayload
+      );
+
+      const worsenedEvent = await insertAlertTestEvent(
+        client,
+        incidentId,
+        created.store.id,
+        "immutable-worsened"
+      );
+      await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId,
+        eventId: worsenedEvent,
+        alertType: "incident_worsened"
+      });
+      await client.query(
+        "UPDATE incidents SET status = 'resolved', summary = 'Feed count returned to normal.' WHERE id = $1",
+        [incidentId]
+      );
+      const resolvedEvent = await insertAlertTestEvent(
+        client,
+        incidentId,
+        created.store.id,
+        "immutable-resolved"
+      );
+      await createAlertDeliveriesForIncidentEvent(client, {
+        incidentId,
+        eventId: resolvedEvent,
+        alertType: "incident_resolved"
+      });
+
+      const [worsenedPayload, resolvedPayload] = await Promise.all([
+        getAlertEventPayloadByEventId(worsenedEvent, client),
+        getAlertEventPayloadByEventId(resolvedEvent, client)
+      ]);
+      expect(worsenedPayload?.payload.alertType).toBe("incident_worsened");
+      expect(resolvedPayload?.payload).toMatchObject({
+        alertType: "incident_resolved",
+        incident: { status: "resolved", summary: "Feed count returned to normal." }
+      });
+      expect(worsenedPayload?.payload.event.id).not.toBe(resolvedPayload?.payload.event.id);
+    } finally {
+      client.release();
+    }
+  });
+
   it("claims alert deliveries with leases, fencing, retries, and channel isolation", async () => {
     const created = await createStore({
       name: "Alert Delivery Worker Store",
@@ -2191,7 +2376,12 @@ describeIfDatabase("postgres smoke", () => {
         leaseSeconds: 300
       });
       expect(initialClaim).toEqual([
-        expect.objectContaining({ id: leaseDelivery.id, attemptCount: 1, lockedBy: "worker-a" })
+        expect.objectContaining({
+          id: leaseDelivery.id,
+          attemptCount: 1,
+          lockedBy: "worker-a",
+          payload: expect.objectContaining({ version: "v1" })
+        })
       ]);
       await expect(
         claimDueAlertDeliveries({ channel: "email", workerId: "worker-b", limit: 10 })
@@ -2306,19 +2496,30 @@ describeIfDatabase("postgres smoke", () => {
 
       const workerDelivery = await createPendingDelivery(client, created.store.id, "worker", "email");
       const workerFailure = await createPendingDelivery(client, created.store.id, "worker-failure", "email");
+      const failurePayloadBefore = await getAlertEventPayloadByEventId(
+        workerFailure.incidentEventId,
+        client
+      );
       const { runAlertDeliveryBatch } = await import("@eim/worker");
       const batch = await runAlertDeliveryBatch({
         channel: "email",
         workerId: "batch-worker",
         sender: {
-          async send(delivery) {
-            if (delivery.id === workerFailure.id) throw new Error("temporary batch failure");
-            if (delivery.id !== workerDelivery.id) throw new Error("unexpected delivery");
+          async send(message) {
+            expect(message.channel).toBe("email");
+            expect(message.content).toEqual(
+              expect.objectContaining({ subject: expect.any(String), text: expect.any(String) })
+            );
+            if (message.deliveryId === workerFailure.id) throw new Error("temporary batch failure");
+            if (message.deliveryId !== workerDelivery.id) throw new Error("unexpected delivery");
             return { providerMessageId: "batch-provider-message" };
           }
         }
       });
       expect(batch).toEqual({ claimed: 2, sent: 1, retried: 1, failed: 0 });
+      await expect(
+        getAlertEventPayloadByEventId(workerFailure.incidentEventId, client)
+      ).resolves.toEqual(failurePayloadBefore);
     } finally {
       client.release();
     }

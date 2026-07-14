@@ -1,9 +1,10 @@
-import type { IncidentStatus, IncidentType } from "@eim/core";
+import type { AlertType, IncidentStatus, IncidentType } from "@eim/core";
 import type pg from "pg";
+import { createOrGetAlertEventPayload } from "./alert-event-payloads";
 import { getAlertPreferences } from "./alert-preferences";
 import { getActiveMaintenanceWindow } from "./maintenance-windows";
 
-export type AlertType = "incident_opened" | "incident_worsened" | "incident_resolved";
+export type { AlertType } from "@eim/core";
 type AlertChannel = "email" | "telegram";
 
 type AlertDeliveryRow = {
@@ -61,6 +62,8 @@ export async function createAlertDeliveriesForIncidentEvent(
   }>("SELECT store_id, type, status FROM incidents WHERE id = $1", [input.incidentId]);
   const current = incident.rows[0];
   if (!current) throw new Error(`Incident ${input.incidentId} was not found for alert delivery`);
+
+  await createOrGetAlertEventPayload(client, input);
 
   const [preferences, maintenanceWindow] = await Promise.all([
     getAlertPreferences(current.store_id, client),

@@ -2,12 +2,34 @@ import {
   claimDueAlertDeliveries,
   markAlertDeliveryAttemptFailed,
   markAlertDeliverySent,
-  type AlertDeliveryChannel,
-  type ClaimedAlertDelivery
+  type AlertDeliveryChannel
 } from "@eim/db";
+import {
+  renderEmailAlert,
+  renderTelegramAlert,
+  type AlertType,
+  type RenderedEmailAlert,
+  type RenderedTelegramAlert
+} from "@eim/core";
+
+export type AlertDeliveryMessage =
+  | {
+      deliveryId: string;
+      incidentEventId: string;
+      alertType: AlertType;
+      channel: "telegram";
+      content: RenderedTelegramAlert;
+    }
+  | {
+      deliveryId: string;
+      incidentEventId: string;
+      alertType: AlertType;
+      channel: "email";
+      content: RenderedEmailAlert;
+    };
 
 export type AlertDeliverySender = {
-  send(delivery: ClaimedAlertDelivery): Promise<{ providerMessageId: string }>;
+  send(message: AlertDeliveryMessage): Promise<{ providerMessageId: string }>;
 };
 
 export type RunAlertDeliveryBatchInput = {
@@ -45,7 +67,7 @@ export async function runAlertDeliveryBatch(
 
   for (const delivery of deliveries) {
     try {
-      const sent = await input.sender.send(delivery);
+      const sent = await input.sender.send(renderAlertDeliveryMessage(delivery));
       const marked = await markAlertDeliverySent({
         deliveryId: delivery.id,
         workerId: input.workerId,
@@ -70,4 +92,28 @@ export async function runAlertDeliveryBatch(
   }
 
   return result;
+}
+
+function renderAlertDeliveryMessage(
+  delivery: Awaited<ReturnType<typeof claimDueAlertDeliveries>>[number]
+): AlertDeliveryMessage {
+  const common = {
+    deliveryId: delivery.id,
+    incidentEventId: delivery.incidentEventId,
+    alertType: delivery.alertType
+  };
+
+  if (delivery.channel === "telegram") {
+    return {
+      ...common,
+      channel: "telegram",
+      content: renderTelegramAlert(delivery.payload)
+    };
+  }
+
+  return {
+    ...common,
+    channel: "email",
+    content: renderEmailAlert(delivery.payload)
+  };
 }
