@@ -457,7 +457,7 @@ Milestone 7.4 Telegram HTTP transport is complete and operationally verified. Th
 
 Enabling a Telegram destination affects future alert deliveries and does not automatically retry historical terminal configuration failures.
 
-Milestone 7.5 Telegram run-once runtime is code-complete. `npm run worker:telegram` loads configuration before the first claim, creates the real transport, executes one Telegram batch, and writes only aggregate delivery statistics. It deliberately does not add a loop, scheduler, or hosting integration; `SIGTERM` cannot cause a second batch to start. The runtime and transport are CI-verified through injected HTTP responses, but a controlled live Telegram provider smoke test with a private test chat remains pending and is never run in CI.
+Milestone 7.5 Telegram run-once runtime is complete and operationally verified through injected transport responses. `npm run worker:telegram` loads configuration before the first claim, creates the real transport, executes one Telegram batch, and writes only aggregate delivery statistics. It deliberately does not add a loop, scheduler, or hosting integration; `SIGTERM` cannot cause a second batch to start. Clean GitHub CI passed the current PostgreSQL suite and full validation pipeline. A controlled live Telegram provider smoke test with a private test chat remains pending and is never run in CI.
 
 Milestone 7 hardening backlog: classify an immutable payload that is missing, malformed, or unsupported after claim as a permanent delivery failure (`payload_missing`, `payload_validation_failed`, or `unsupported_payload_version`) so the lease does not wait for expiry without an immediate diagnostic.
 
