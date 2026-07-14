@@ -10,3 +10,4 @@ export * from "./migrations";
 export * from "./snapshots";
 export * from "./stores";
 export * from "./thresholds";
+export * from "./telegram-destinations";

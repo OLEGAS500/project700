@@ -1,7 +1,10 @@
 import {
   claimDueAlertDeliveries,
+  getTelegramDestination,
   markAlertDeliveryAttemptFailed,
+  markAlertDeliveryConfigurationFailed,
   markAlertDeliverySent,
+  type AlertDeliveryConfigurationErrorCode,
   type AlertDeliveryChannel
 } from "@eim/db";
 import {
@@ -12,21 +15,27 @@ import {
   type RenderedTelegramAlert
 } from "@eim/core";
 
-export type AlertDeliveryMessage =
-  | {
-      deliveryId: string;
-      incidentEventId: string;
-      alertType: AlertType;
-      channel: "telegram";
-      content: RenderedTelegramAlert;
-    }
-  | {
-      deliveryId: string;
-      incidentEventId: string;
-      alertType: AlertType;
-      channel: "email";
-      content: RenderedEmailAlert;
-    };
+export type TelegramSendRequest = {
+  deliveryId: string;
+  incidentEventId: string;
+  alertType: AlertType;
+  channel: "telegram";
+  destination: {
+    chatId: string;
+    threadId: number | null;
+  };
+  content: RenderedTelegramAlert;
+};
+
+export type EmailSendRequest = {
+  deliveryId: string;
+  incidentEventId: string;
+  alertType: AlertType;
+  channel: "email";
+  content: RenderedEmailAlert;
+};
+
+export type AlertDeliveryMessage = TelegramSendRequest | EmailSendRequest;
 
 export type AlertDeliverySender = {
   send(message: AlertDeliveryMessage): Promise<{ providerMessageId: string }>;
@@ -67,7 +76,19 @@ export async function runAlertDeliveryBatch(
 
   for (const delivery of deliveries) {
     try {
-      const sent = await input.sender.send(renderAlertDeliveryMessage(delivery));
+      const rendered = await renderAlertDeliveryMessage(delivery);
+      if ("configurationError" in rendered) {
+        const marked = await markAlertDeliveryConfigurationFailed({
+          deliveryId: delivery.id,
+          workerId: input.workerId,
+          claimedAttemptCount: delivery.attemptCount,
+          errorCode: rendered.configurationError
+        });
+        if (marked?.status === "failed") result.failed += 1;
+        continue;
+      }
+
+      const sent = await input.sender.send(rendered);
       const marked = await markAlertDeliverySent({
         deliveryId: delivery.id,
         workerId: input.workerId,
@@ -94,9 +115,12 @@ export async function runAlertDeliveryBatch(
   return result;
 }
 
-function renderAlertDeliveryMessage(
+async function renderAlertDeliveryMessage(
   delivery: Awaited<ReturnType<typeof claimDueAlertDeliveries>>[number]
-): AlertDeliveryMessage {
+): Promise<
+  | AlertDeliveryMessage
+  | { configurationError: AlertDeliveryConfigurationErrorCode }
+> {
   const common = {
     deliveryId: delivery.id,
     incidentEventId: delivery.incidentEventId,
@@ -104,9 +128,20 @@ function renderAlertDeliveryMessage(
   };
 
   if (delivery.channel === "telegram") {
+    const destination = await getTelegramDestination(delivery.storeId);
+    if (!destination) {
+      return { configurationError: "telegram_destination_missing" };
+    }
+    if (!destination.enabled) {
+      return { configurationError: "telegram_destination_disabled" };
+    }
     return {
       ...common,
       channel: "telegram",
+      destination: {
+        chatId: destination.chatId,
+        threadId: destination.threadId
+      },
       content: renderTelegramAlert(delivery.payload)
     };
   }
