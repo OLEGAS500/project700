@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSnapshotInputSchema,
   createStoreInputSchema,
+  emailDestinationInputSchema,
   sourceCheckStatusSchema,
   telegramDestinationInputSchema,
   updateAlertPreferencesInputSchema,
@@ -118,6 +119,31 @@ describe("core schemas", () => {
         displayName: null,
         enabled: true,
         botToken: "must-not-be-accepted"
+      }).success
+    ).toBe(false);
+  });
+
+  it("normalizes and strictly validates email destinations without accepting provider secrets", () => {
+    expect(
+      emailDestinationInputSchema.parse({
+        recipientEmails: [" Alerts@Example.com ", "ops@example.com"],
+        enabled: true
+      })
+    ).toEqual({
+      recipientEmails: ["alerts@example.com", "ops@example.com"],
+      enabled: true
+    });
+    expect(
+      emailDestinationInputSchema.safeParse({
+        recipientEmails: ["alerts@example.com", "ALERTS@example.com"],
+        enabled: true
+      }).success
+    ).toBe(false);
+    expect(
+      emailDestinationInputSchema.safeParse({
+        recipientEmails: ["alerts@example.com"],
+        enabled: true,
+        providerApiKey: "must-not-be-accepted"
       }).success
     ).toBe(false);
   });

@@ -16,6 +16,11 @@ import {
 } from "./alert-delivery-jobs";
 import { getAlertEventPayloadByEventId } from "./alert-event-payloads";
 import { getAlertPreferences, updateAlertPreferences } from "./alert-preferences";
+import {
+  disableEmailDestination,
+  getEmailDestination,
+  upsertEmailDestination
+} from "./email-destinations";
 import { applyMigrations } from "./migrations";
 import {
   acknowledgeIncident,
@@ -159,13 +164,15 @@ describeIfDatabase("postgres smoke", () => {
       "0001_initial.sql",
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
-      "0004_telegram_destinations.sql"
+      "0004_telegram_destinations.sql",
+      "0005_email_destinations.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
-      "0004_telegram_destinations.sql"
+      "0004_telegram_destinations.sql",
+      "0005_email_destinations.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
@@ -2465,6 +2472,14 @@ describeIfDatabase("postgres smoke", () => {
       expect(configuredBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
       expect(telegramSendCount).toBe(1);
 
+      const emailDestination = await upsertEmailDestination(
+        unconfiguredStore.store.id,
+        {
+          recipientEmails: ["alerts@example.com", "operations@example.com"],
+          enabled: true
+        },
+        client
+      );
       const emailDelivery = await createPendingDelivery(
         client,
         unconfiguredStore.store.id,
@@ -2479,14 +2494,15 @@ describeIfDatabase("postgres smoke", () => {
             expect(message).toMatchObject({
               deliveryId: emailDelivery.id,
               channel: "email",
+              destination: { recipientEmails: ["alerts@example.com", "operations@example.com"] },
               content: { subject: expect.any(String), text: expect.any(String) }
             });
-            expect("destination" in message).toBe(false);
             return { providerMessageId: "fake-email-message" };
           }
         }
       });
       expect(emailBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+      expect(emailDestination.enabled).toBe(true);
 
       await updateAlertPreferences(unconfiguredStore.store.id, { telegramEnabled: true });
       const missingDestinationDelivery = await createPendingDelivery(
@@ -2587,6 +2603,187 @@ describeIfDatabase("postgres smoke", () => {
     }
   });
 
+  it("resolves email destinations and terminally fails configuration errors", async () => {
+    const configuredStore = await createStore({
+      name: "Configured Email Store",
+      domain: "https://configured-email.example.com",
+      sitemapUrl: "https://configured-email.example.com/sitemap.xml",
+      feedUrl: "https://configured-email.example.com/feed.xml",
+      categoryUrls: ["https://configured-email.example.com/collections/all"]
+    });
+    const unconfiguredStore = await createStore({
+      name: "Unconfigured Email Store",
+      domain: "https://unconfigured-email.example.com",
+      sitemapUrl: "https://unconfigured-email.example.com/sitemap.xml",
+      feedUrl: "https://unconfigured-email.example.com/feed.xml",
+      categoryUrls: ["https://unconfigured-email.example.com/collections/all"]
+    });
+    const client = await (await import("./client")).getPool().connect();
+
+    try {
+      await expect(getEmailDestination(unconfiguredStore.store.id, client)).resolves.toBeNull();
+      const createdDestination = await upsertEmailDestination(
+        configuredStore.store.id,
+        { recipientEmails: ["alerts@example.com"], enabled: true },
+        client
+      );
+      const updatedDestination = await upsertEmailDestination(
+        configuredStore.store.id,
+        { recipientEmails: ["alerts@example.com", "ops@example.com"], enabled: true },
+        client
+      );
+      expect(updatedDestination).toMatchObject({
+        id: createdDestination.id,
+        storeId: configuredStore.store.id,
+        recipientEmails: ["alerts@example.com", "ops@example.com"],
+        enabled: true,
+        disabledAt: null
+      });
+
+      await Promise.all([
+        upsertEmailDestination(configuredStore.store.id, {
+          recipientEmails: ["concurrent-a@example.com"],
+          enabled: true
+        }),
+        upsertEmailDestination(configuredStore.store.id, {
+          recipientEmails: ["concurrent-b@example.com"],
+          enabled: true
+        })
+      ]);
+      const destinationCount = await client.query<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM email_destinations WHERE store_id = $1",
+        [configuredStore.store.id]
+      );
+      expect(Number(destinationCount.rows[0].count)).toBe(1);
+
+      const activeDestination = await upsertEmailDestination(
+        configuredStore.store.id,
+        { recipientEmails: ["delivery@example.com"], enabled: true },
+        client
+      );
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent', sent_at = clock_timestamp(), updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
+
+      const configuredDelivery = await createPendingDelivery(
+        client,
+        configuredStore.store.id,
+        "configured-email",
+        "email"
+      );
+      const { runAlertDeliveryBatch } = await import("@eim/worker");
+      const configuredBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "configured-email-worker",
+        sender: {
+          async send(message) {
+            expect(message).toMatchObject({
+              deliveryId: configuredDelivery.id,
+              channel: "email",
+              destination: { recipientEmails: ["delivery@example.com"] },
+              content: { subject: expect.any(String), text: expect.any(String) }
+            });
+            return { providerMessageId: "fake-email-message" };
+          }
+        }
+      });
+      expect(configuredBatch).toEqual({ claimed: 1, sent: 1, retried: 0, failed: 0 });
+
+      const missingDelivery = await createPendingDelivery(
+        client,
+        unconfiguredStore.store.id,
+        "missing-email",
+        "email"
+      );
+      const missingBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "missing-email-worker",
+        sender: {
+          async send() {
+            throw new Error("sender must not run without an email destination");
+          }
+        }
+      });
+      expect(missingBatch).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+
+      const disabledDestination = await disableEmailDestination(configuredStore.store.id, client);
+      const disabledDelivery = await createPendingDelivery(
+        client,
+        configuredStore.store.id,
+        "disabled-email",
+        "email"
+      );
+      const disabledBatch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "disabled-email-worker",
+        sender: {
+          async send() {
+            throw new Error("sender must not run for a disabled email destination");
+          }
+        }
+      });
+      expect(disabledBatch).toEqual({ claimed: 1, sent: 0, retried: 0, failed: 1 });
+      expect(disabledDestination).toMatchObject({
+        id: activeDestination.id,
+        enabled: false,
+        disabledAt: expect.any(String)
+      });
+
+      const configurationFailures = await client.query<{
+        id: string;
+        status: string;
+        attempt_count: number;
+        last_error: string;
+      }>(
+        `
+          SELECT id, status, attempt_count, last_error
+          FROM alert_deliveries
+          WHERE id = ANY($1::uuid[])
+          ORDER BY last_error
+        `,
+        [[missingDelivery.id, disabledDelivery.id]]
+      );
+      expect(configurationFailures.rows).toEqual([
+        {
+          id: disabledDelivery.id,
+          status: "failed",
+          attempt_count: 1,
+          last_error: "email_destination_disabled"
+        },
+        {
+          id: missingDelivery.id,
+          status: "failed",
+          attempt_count: 1,
+          last_error: "email_destination_missing"
+        }
+      ]);
+      await expect(
+        claimDueAlertDeliveries({ channel: "email", workerId: "email-configuration-retry" })
+      ).resolves.toEqual([]);
+
+      const secretColumns = await client.query<{ count: string }>(
+        `
+          SELECT COUNT(*) AS count
+          FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name = 'email_destinations'
+            AND (column_name ILIKE '%token%' OR column_name ILIKE '%key%' OR column_name ILIKE '%secret%')
+        `
+      );
+      expect(Number(secretColumns.rows[0].count)).toBe(0);
+      await expect(getEmailDestination(configuredStore.store.id, client)).resolves.toMatchObject({
+        id: activeDestination.id,
+        enabled: false
+      });
+    } finally {
+      client.release();
+    }
+  });
+
   it("claims alert deliveries with leases, fencing, retries, and channel isolation", async () => {
     const created = await createStore({
       name: "Alert Delivery Worker Store",
@@ -2596,6 +2793,10 @@ describeIfDatabase("postgres smoke", () => {
       categoryUrls: ["https://alert-delivery-worker.example.com/collections/all"]
     });
     await updateAlertPreferences(created.store.id, { telegramEnabled: true });
+    await upsertEmailDestination(created.store.id, {
+      recipientEmails: ["worker@example.com"],
+      enabled: true
+    });
     const pool = (await import("./client")).getPool();
     const client = await pool.connect();
 
