@@ -12,6 +12,7 @@ import {
 import {
   claimDueAlertDeliveries,
   markAlertDeliveryAttemptFailed,
+  markAlertDeliveryPermanentFailed,
   markAlertDeliverySent
 } from "./alert-delivery-jobs";
 import { getAlertEventPayloadByEventId } from "./alert-event-payloads";
@@ -165,14 +166,16 @@ describeIfDatabase("postgres smoke", () => {
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
       "0004_telegram_destinations.sql",
-      "0005_email_destinations.sql"
+      "0005_email_destinations.sql",
+      "0006_alert_payload_versions.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
       "0004_telegram_destinations.sql",
-      "0005_email_destinations.sql"
+      "0005_email_destinations.sql",
+      "0006_alert_payload_versions.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
@@ -3321,6 +3324,195 @@ describeIfDatabase("postgres smoke", () => {
         providerMessageId: null,
         lastError: "resend_authentication_failed: Invalid [REDACTED]"
       });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("terminally fails malformed immutable payloads without sending or waiting for lease expiry", async () => {
+    const created = await createStore({
+      name: "Payload Failure Store",
+      domain: "https://payload-failure.example.com",
+      sitemapUrl: "https://payload-failure.example.com/sitemap.xml",
+      feedUrl: "https://payload-failure.example.com/feed.xml",
+      categoryUrls: ["https://payload-failure.example.com/collections/all"]
+    });
+    const client = await (await import("./client")).getPool().connect();
+
+    try {
+      await upsertEmailDestination(created.store.id, {
+        recipientEmails: ["ops@payload-failure.example.com"],
+        enabled: true
+      });
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent', sent_at = clock_timestamp(), updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
+
+      const missing = await createPendingDelivery(
+        client,
+        created.store.id,
+        "payload-missing",
+        "email"
+      );
+      const invalid = await createPendingDelivery(
+        client,
+        created.store.id,
+        "payload-invalid",
+        "email"
+      );
+      const unsupported = await createPendingDelivery(
+        client,
+        created.store.id,
+        "payload-v999",
+        "email"
+      );
+      const valid = await createPendingDelivery(client, created.store.id, "payload-valid", "email");
+      await Promise.all([
+        markOtherChannelSent(client, missing.incidentEventId, "email"),
+        markOtherChannelSent(client, invalid.incidentEventId, "email"),
+        markOtherChannelSent(client, unsupported.incidentEventId, "email"),
+        markOtherChannelSent(client, valid.incidentEventId, "email")
+      ]);
+      await client.query(
+        "DELETE FROM alert_event_payloads WHERE incident_event_id = $1",
+        [missing.incidentEventId]
+      );
+      await client.query(
+        "UPDATE alert_event_payloads SET payload_json = $2::jsonb WHERE incident_event_id = $1",
+        [invalid.incidentEventId, JSON.stringify({ rawPayload: "do-not-persist" })]
+      );
+      await client.query(
+        "UPDATE alert_event_payloads SET payload_version = 'v999' WHERE incident_event_id = $1",
+        [unsupported.incidentEventId]
+      );
+
+      const { runAlertDeliveryBatch } = await import("@eim/worker");
+      const sentDeliveryIds: string[] = [];
+      const batch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "payload-failure-worker",
+        sender: {
+          async send(message) {
+            sentDeliveryIds.push(message.deliveryId);
+            return { providerMessageId: "valid-payload-provider-id" };
+          }
+        }
+      });
+      expect(batch).toEqual({ claimed: 4, sent: 1, retried: 0, failed: 3 });
+      expect(sentDeliveryIds).toEqual([valid.id]);
+
+      const failedStates = await client.query<{
+        id: string;
+        status: string;
+        last_error: string | null;
+        locked_by: string | null;
+        locked_at: Date | null;
+        lease_expires_at: Date | null;
+      }>(
+        `
+          SELECT id, status::text, last_error, locked_by, locked_at, lease_expires_at
+          FROM alert_deliveries
+          WHERE id = ANY($1::uuid[])
+          ORDER BY id
+        `,
+        [[missing.id, invalid.id, unsupported.id]]
+      );
+      expect(failedStates.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: missing.id,
+            status: "failed",
+            last_error: "payload_missing",
+            locked_by: null,
+            locked_at: null,
+            lease_expires_at: null
+          }),
+          expect.objectContaining({
+            id: invalid.id,
+            status: "failed",
+            last_error: "payload_validation_failed",
+            locked_by: null,
+            locked_at: null,
+            lease_expires_at: null
+          }),
+          expect.objectContaining({
+            id: unsupported.id,
+            status: "failed",
+            last_error: "unsupported_payload_version",
+            locked_by: null,
+            locked_at: null,
+            lease_expires_at: null
+          })
+        ])
+      );
+      expect(failedStates.rows.every((row) => !row.last_error?.includes("do-not-persist"))).toBe(
+        true
+      );
+      await expectAlertDeliveryState(client, valid.id, {
+        status: "sent",
+        providerMessageId: "valid-payload-provider-id",
+        lastError: null
+      });
+
+      const stale = await createPendingDelivery(
+        client,
+        created.store.id,
+        "payload-stale-worker",
+        "email"
+      );
+      await markOtherChannelSent(client, stale.incidentEventId, "email");
+      await client.query(
+        "DELETE FROM alert_event_payloads WHERE incident_event_id = $1",
+        [stale.incidentEventId]
+      );
+      const firstClaim = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "payload-old-worker",
+        limit: 1
+      });
+      expect(firstClaim).toEqual([
+        expect.objectContaining({
+          id: stale.id,
+          attemptCount: 1,
+          payloadStatus: "payload_missing"
+        })
+      ]);
+      await client.query(
+        "UPDATE alert_deliveries SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+        [stale.id]
+      );
+      const reclaimed = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "payload-new-worker",
+        limit: 1
+      });
+      expect(reclaimed).toEqual([
+        expect.objectContaining({
+          id: stale.id,
+          attemptCount: 2,
+          payloadStatus: "payload_missing"
+        })
+      ]);
+      await expect(
+        markAlertDeliveryPermanentFailed({
+          deliveryId: stale.id,
+          workerId: "payload-old-worker",
+          claimedAttemptCount: 1,
+          errorCode: "payload_missing"
+        })
+      ).resolves.toBeNull();
+      await expect(
+        markAlertDeliveryPermanentFailed({
+          deliveryId: stale.id,
+          workerId: "payload-new-worker",
+          claimedAttemptCount: 2,
+          errorCode: "payload_missing"
+        })
+      ).resolves.toMatchObject({ status: "failed", attemptCount: 2 });
     } finally {
       client.release();
     }

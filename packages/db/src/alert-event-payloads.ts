@@ -18,7 +18,7 @@ type AlertEventPayloadRow = {
   incident_id: string;
   store_id: string;
   alert_type: AlertType;
-  payload_version: "v1";
+  payload_version: string;
   payload_json: unknown;
   created_at: Date;
 };
@@ -62,6 +62,11 @@ export type AlertEventPayloadRecord = {
   payload: CanonicalAlertPayload;
   createdAt: string;
 };
+
+export type DeliveryAlertPayloadState =
+  | { status: "valid"; payload: CanonicalAlertPayload }
+  | { status: "payload_validation_failed" }
+  | { status: "unsupported_payload_version" };
 
 export async function createOrGetAlertEventPayload(
   client: pg.PoolClient,
@@ -185,6 +190,20 @@ export async function getAlertEventPayloadsByEventIds(
   );
 }
 
+export async function getDeliveryAlertPayloadStatesByEventIds(
+  eventIds: string[],
+  executor: Pick<pg.Pool | pg.PoolClient, "query">
+): Promise<Map<string, DeliveryAlertPayloadState>> {
+  if (eventIds.length === 0) return new Map();
+  const result = await executor.query<AlertEventPayloadRow>(
+    "SELECT * FROM alert_event_payloads WHERE incident_event_id = ANY($1::uuid[])",
+    [eventIds]
+  );
+  return new Map(
+    result.rows.map((row) => [row.incident_event_id, classifyDeliveryPayload(row)])
+  );
+}
+
 function buildCanonicalAlertPayload(
   context: AlertPayloadContextRow,
   signals: AlertPayloadSignalRow[],
@@ -289,14 +308,8 @@ function metricUnit(metric: string): string | null {
 }
 
 function mapAlertEventPayload(row: AlertEventPayloadRow): AlertEventPayloadRecord {
-  const payload = canonicalAlertPayloadSchema.parse(row.payload_json);
-  if (
-    payload.version !== row.payload_version ||
-    payload.alertType !== row.alert_type ||
-    payload.event.id !== row.incident_event_id ||
-    payload.incident.id !== row.incident_id ||
-    payload.store.id !== row.store_id
-  ) {
+  const state = classifyDeliveryPayload(row);
+  if (state.status !== "valid") {
     throw new Error(`Alert payload ${row.id} does not match its relational identity`);
   }
 
@@ -306,10 +319,32 @@ function mapAlertEventPayload(row: AlertEventPayloadRow): AlertEventPayloadRecor
     incidentId: row.incident_id,
     storeId: row.store_id,
     alertType: row.alert_type,
-    payloadVersion: row.payload_version,
-    payload,
+    payloadVersion: "v1",
+    payload: state.payload,
     createdAt: row.created_at.toISOString()
   };
+}
+
+function classifyDeliveryPayload(row: AlertEventPayloadRow): DeliveryAlertPayloadState {
+  if (row.payload_version !== "v1") {
+    return { status: "unsupported_payload_version" };
+  }
+
+  const parsed = canonicalAlertPayloadSchema.safeParse(row.payload_json);
+  if (!parsed.success) return { status: "payload_validation_failed" };
+
+  const payload = parsed.data;
+  if (
+    payload.version !== row.payload_version ||
+    payload.alertType !== row.alert_type ||
+    payload.event.id !== row.incident_event_id ||
+    payload.incident.id !== row.incident_id ||
+    payload.store.id !== row.store_id
+  ) {
+    return { status: "payload_validation_failed" };
+  }
+
+  return { status: "valid", payload };
 }
 
 function assertPayloadIdentity(

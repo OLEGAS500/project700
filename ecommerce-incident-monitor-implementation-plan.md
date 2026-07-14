@@ -443,6 +443,7 @@ Acceptance criteria:
 - Milestone 7.6.1 adds a secret-free email destination per store with strict GET/PUT/DELETE configuration, normalized recipient addresses, and terminal missing/disabled destination handling before an email provider transport is introduced.
 - Milestone 7.6.2 sends rendered plain-text email through an injectable Resend HTTP transport, keeps credentials at the environment boundary, uses a stable delivery idempotency key, and classifies transient and permanent provider failures without persisting secrets or message content.
 - Milestone 7.6.3 provides a run-once email runtime entrypoint. It validates database and Resend configuration before the first claim, creates one transport and runs one batch, writes only aggregate counts, and closes the database pool on every outcome.
+- Milestone 7.7 terminally fails claimed delivery intents when their immutable payload is missing, schema-invalid, or uses an unsupported version, without invoking a channel sender or waiting for the lease to expire.
 - Pending email and Telegram intents can be claimed independently; active leases are not double-claimed, expired leases are reclaimed, stale workers are fenced, and retry delay follows 1, 5, 15, and 60 minute steps before the configured maximum attempts.
 - The first worker slice uses an injected fake sender only; it does not call Telegram, email, or any provider API.
 - Critical confirmed incidents send one alert.
@@ -470,7 +471,7 @@ Milestone 7.6.2 Resend email transport is complete and operationally verified. T
 
 Milestone 7.6.3 email run-once runtime is complete and operationally verified. `npm run worker:email` validates `DATABASE_URL` and the Resend sender boundary before its first claim, creates exactly one transport, processes exactly one email batch, writes only aggregate delivery counts, and closes the database pool for success, configuration failure, batch failure, and close failure. Clean GitHub CI passed the current PostgreSQL suite and full validation pipeline. It deliberately does not add a loop, scheduler, or live provider call to CI.
 
-Milestone 7 hardening backlog: classify an immutable payload that is missing, malformed, or unsupported after claim as a permanent delivery failure (`payload_missing`, `payload_validation_failed`, or `unsupported_payload_version`) so the lease does not wait for expiry without an immediate diagnostic.
+Milestone 7.7 permanent payload failures is code-complete pending PostgreSQL CI verification. Claimed delivery intents now receive an explicit immutable payload state: missing, schema-invalid, and unsupported-version payloads are fenced terminal failures with safe stable codes, cleared leases, no sender invocation, and no retry; valid deliveries in the same batch continue normally.
 
 ### Milestone 8: Dashboard
 
