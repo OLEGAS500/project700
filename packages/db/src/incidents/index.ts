@@ -347,6 +347,8 @@ export async function createOrUpdatePriceAvailabilityMismatchIncident(
   );
 
   return withTransaction(async (client) => {
+    await lockPriceAvailabilityDebounceFingerprint(client, fingerprint);
+
     if (!evaluation.significant) {
       await dismissPriceAvailabilityDebounceCandidate(
         client,
@@ -440,6 +442,16 @@ export async function createOrUpdatePriceAvailabilityMismatchIncident(
 
     return incidentId;
   });
+}
+
+async function lockPriceAvailabilityDebounceFingerprint(
+  client: pg.PoolClient,
+  fingerprint: string
+): Promise<void> {
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+    [fingerprint]
+  );
 }
 
 async function getFeedIncidentContext(storeId: string, snapshotId: string): Promise<{
