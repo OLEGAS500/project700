@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -11,7 +9,13 @@ import {
   createAlertDeliveriesForIncidentEvent,
   createIncidentOpenedAlertDelivery
 } from "./alerts";
+import {
+  claimDueAlertDeliveries,
+  markAlertDeliveryAttemptFailed,
+  markAlertDeliverySent
+} from "./alert-delivery-jobs";
 import { getAlertPreferences, updateAlertPreferences } from "./alert-preferences";
+import { applyMigrations } from "./migrations";
 import {
   acknowledgeIncident,
   addIncidentComment,
@@ -69,13 +73,9 @@ describeIfDatabase("postgres smoke", () => {
     dbUrlWithSchema = withSearchPath(testDatabaseUrl!, schemaName);
     process.env.DATABASE_URL = dbUrlWithSchema;
 
-    const migration = await readFile(
-      path.join(process.cwd(), "packages/db/migrations/0001_initial.sql"),
-      "utf8"
-    );
     const migrator = new Client({ connectionString: dbUrlWithSchema });
     await migrator.connect();
-    await migrator.query(migration);
+    await applyMigrations(migrator);
     await migrator.end();
   });
 
@@ -137,6 +137,24 @@ describeIfDatabase("postgres smoke", () => {
         categoryUrls: ["https://example.com/collections/other"]
       })
     ).rejects.toBeInstanceOf(DuplicateStoreDomainError);
+  });
+
+  it("applies each migration once and records its checksum", async () => {
+    const migrator = new Client({ connectionString: dbUrlWithSchema });
+    await migrator.connect();
+    const secondRun = await applyMigrations(migrator);
+    const migrations = await migrator.query<{ name: string; checksum: string }>(
+      "SELECT name, checksum FROM schema_migrations ORDER BY name"
+    );
+    await migrator.end();
+
+    expect(secondRun.applied).toEqual([]);
+    expect(secondRun.skipped).toEqual(["0001_initial.sql", "0002_alert_delivery_worker.sql"]);
+    expect(migrations.rows.map((migration) => migration.name)).toEqual([
+      "0001_initial.sql",
+      "0002_alert_delivery_worker.sql"
+    ]);
+    expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
 
   it("rolls back onboarding when category creation fails", async () => {
@@ -2135,7 +2153,202 @@ describeIfDatabase("postgres smoke", () => {
       { channel: "telegram", count: "5" }
     ]);
   });
+
+  it("claims alert deliveries with leases, fencing, retries, and channel isolation", async () => {
+    const created = await createStore({
+      name: "Alert Delivery Worker Store",
+      domain: "https://alert-delivery-worker.example.com",
+      sitemapUrl: "https://alert-delivery-worker.example.com/sitemap.xml",
+      feedUrl: "https://alert-delivery-worker.example.com/feed.xml",
+      categoryUrls: ["https://alert-delivery-worker.example.com/collections/all"]
+    });
+    await updateAlertPreferences(created.store.id, { telegramEnabled: true });
+    const pool = (await import("./client")).getPool();
+    const client = await pool.connect();
+
+    try {
+      await client.query(
+        `
+          UPDATE alert_deliveries
+          SET status = 'sent',
+              sent_at = clock_timestamp(),
+              locked_at = NULL,
+              locked_by = NULL,
+              lease_expires_at = NULL,
+              updated_at = clock_timestamp()
+          WHERE status = 'pending'
+        `
+      );
+      const leaseDelivery = await createPendingDelivery(client, created.store.id, "lease", "email");
+      await updateAlertPreferences(created.store.id, { mutedIncidentTypes: ["source_health"] });
+      await createPendingDelivery(client, created.store.id, "suppressed", "email");
+      await updateAlertPreferences(created.store.id, { mutedIncidentTypes: [] });
+
+      const initialClaim = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "worker-a",
+        limit: 10,
+        leaseSeconds: 300
+      });
+      expect(initialClaim).toEqual([
+        expect.objectContaining({ id: leaseDelivery.id, attemptCount: 1, lockedBy: "worker-a" })
+      ]);
+      await expect(
+        claimDueAlertDeliveries({ channel: "email", workerId: "worker-b", limit: 10 })
+      ).resolves.toEqual([]);
+
+      await client.query(
+        "UPDATE alert_deliveries SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+        [leaseDelivery.id]
+      );
+      const reclaimed = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "worker-b",
+        limit: 10
+      });
+      expect(reclaimed).toEqual([
+        expect.objectContaining({ id: leaseDelivery.id, attemptCount: 2, lockedBy: "worker-b" })
+      ]);
+      await expect(
+        markAlertDeliverySent({
+          deliveryId: leaseDelivery.id,
+          workerId: "worker-a",
+          claimedAttemptCount: 1,
+          providerMessageId: "stale-message"
+        })
+      ).resolves.toBeNull();
+      const sent = await markAlertDeliverySent({
+        deliveryId: leaseDelivery.id,
+        workerId: "worker-b",
+        claimedAttemptCount: 2,
+        providerMessageId: "provider-message-1"
+      });
+      expect(sent).toMatchObject({ status: "sent", attemptCount: 2, providerMessageId: "provider-message-1" });
+      await expect(
+        markAlertDeliverySent({
+          deliveryId: leaseDelivery.id,
+          workerId: "worker-b",
+          claimedAttemptCount: 2,
+          providerMessageId: "ignored-on-replay"
+        })
+      ).resolves.toMatchObject({ status: "sent", providerMessageId: "provider-message-1" });
+
+      const telegramClaim = await claimDueAlertDeliveries({
+        channel: "telegram",
+        workerId: "telegram-worker",
+        limit: 10
+      });
+      expect(telegramClaim).toEqual([
+        expect.objectContaining({ incidentEventId: leaseDelivery.incidentEventId, channel: "telegram" })
+      ]);
+      await markAlertDeliverySent({
+        deliveryId: telegramClaim[0].id,
+        workerId: "telegram-worker",
+        claimedAttemptCount: telegramClaim[0].attemptCount,
+        providerMessageId: "telegram-message-1"
+      });
+
+      const retryDelivery = await createPendingDelivery(client, created.store.id, "retry", "email");
+      const firstRetryClaim = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "retry-worker",
+        maxAttempts: 2
+      });
+      expect(firstRetryClaim).toEqual([
+        expect.objectContaining({ id: retryDelivery.id, attemptCount: 1 })
+      ]);
+      const retried = await markAlertDeliveryAttemptFailed({
+        deliveryId: retryDelivery.id,
+        workerId: "retry-worker",
+        claimedAttemptCount: 1,
+        error: new Error("temporary provider outage"),
+        maxAttempts: 2
+      });
+      expect(retried).toMatchObject({ status: "pending", attemptCount: 1, lastError: "temporary provider outage" });
+      const retryTiming = await client.query<{ scheduled: boolean }>(
+        "SELECT next_attempt_at >= clock_timestamp() + interval '59 seconds' AS scheduled FROM alert_deliveries WHERE id = $1",
+        [retryDelivery.id]
+      );
+      expect(retryTiming.rows[0].scheduled).toBe(true);
+      await client.query(
+        "UPDATE alert_deliveries SET next_attempt_at = clock_timestamp() - interval '1 second' WHERE id = $1",
+        [retryDelivery.id]
+      );
+      const secondRetryClaim = await claimDueAlertDeliveries({
+        channel: "email",
+        workerId: "retry-worker",
+        maxAttempts: 2
+      });
+      expect(secondRetryClaim).toEqual([
+        expect.objectContaining({ id: retryDelivery.id, attemptCount: 2 })
+      ]);
+      await expect(
+        markAlertDeliveryAttemptFailed({
+          deliveryId: retryDelivery.id,
+          workerId: "retry-worker",
+          claimedAttemptCount: 2,
+          error: "permanent provider outage",
+          maxAttempts: 2
+        })
+      ).resolves.toMatchObject({ status: "failed", attemptCount: 2, failedAt: expect.any(String) });
+      await expect(
+        claimDueAlertDeliveries({ channel: "email", workerId: "retry-worker", maxAttempts: 2 })
+      ).resolves.toEqual([]);
+
+      const firstConcurrent = await createPendingDelivery(client, created.store.id, "concurrent-one", "email");
+      const secondConcurrent = await createPendingDelivery(client, created.store.id, "concurrent-two", "email");
+      const [claimedByA, claimedByB] = await Promise.all([
+        claimDueAlertDeliveries({ channel: "email", workerId: "concurrent-a", limit: 1 }),
+        claimDueAlertDeliveries({ channel: "email", workerId: "concurrent-b", limit: 1 })
+      ]);
+      const concurrentIds = [claimedByA[0]?.id, claimedByB[0]?.id].sort();
+      expect(concurrentIds).toEqual([firstConcurrent.id, secondConcurrent.id].sort());
+
+      const workerDelivery = await createPendingDelivery(client, created.store.id, "worker", "email");
+      const workerFailure = await createPendingDelivery(client, created.store.id, "worker-failure", "email");
+      const { runAlertDeliveryBatch } = await import("@eim/worker");
+      const batch = await runAlertDeliveryBatch({
+        channel: "email",
+        workerId: "batch-worker",
+        sender: {
+          async send(delivery) {
+            if (delivery.id === workerFailure.id) throw new Error("temporary batch failure");
+            if (delivery.id !== workerDelivery.id) throw new Error("unexpected delivery");
+            return { providerMessageId: "batch-provider-message" };
+          }
+        }
+      });
+      expect(batch).toEqual({ claimed: 2, sent: 1, retried: 1, failed: 0 });
+    } finally {
+      client.release();
+    }
+  });
 });
+
+async function createPendingDelivery(
+  client: pg.PoolClient,
+  storeId: string,
+  suffix: string,
+  channel: "email" | "telegram"
+): Promise<{ id: string; incidentEventId: string }> {
+  const incident = await client.query<{ id: string }>(
+    `
+      INSERT INTO incidents (store_id, severity, type, title, summary, status)
+      VALUES ($1, 'warning', 'source_health', 'Feed unavailable', 'Alert delivery worker smoke.', 'open')
+      RETURNING id
+    `,
+    [storeId]
+  );
+  const eventId = await insertAlertTestEvent(client, incident.rows[0].id, storeId, `delivery-${suffix}`);
+  const deliveries = await createAlertDeliveriesForIncidentEvent(client, {
+    incidentId: incident.rows[0].id,
+    eventId,
+    alertType: "incident_opened"
+  });
+  const delivery = deliveries.find((item) => item.channel === channel);
+  if (!delivery) throw new Error(`Missing ${channel} delivery for ${suffix}`);
+  return { id: delivery.id, incidentEventId: delivery.eventId };
+}
 
 async function insertAlertTestEvent(
   client: pg.PoolClient,

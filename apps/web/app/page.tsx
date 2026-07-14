@@ -45,8 +45,8 @@ export default async function HomePage() {
         <section className="notice">
           <h2>Database connection needed</h2>
           <p>
-            Set <code>DATABASE_URL</code> and apply the migration at{" "}
-            <code>packages/db/migrations/0001_initial.sql</code> to use the UI.
+            Set <code>DATABASE_URL</code> and apply all files in{" "}
+            <code>packages/db/migrations</code> through the migration runner to use the UI.
           </p>
           <p className="muted">{databaseError}</p>
         </section>
