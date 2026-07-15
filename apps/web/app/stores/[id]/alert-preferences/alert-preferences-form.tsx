@@ -7,7 +7,7 @@ import {
   type AlertPreferencesActionState,
   updateAlertPreferencesAction
 } from "./actions";
-import { decimalToPercentage } from "./percentage";
+import { decimalToPercentage } from "../../../../lib/decimal";
 
 const alertPreferenceIncidentTypes = incidentTypeSchema.options;
 

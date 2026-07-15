@@ -3,6 +3,7 @@
 import type { StoreThresholds } from "@eim/core";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
+import { decimalToPercentage } from "../../../../lib/decimal";
 import { type ThresholdActionState, updateStoreThresholdsAction } from "./actions";
 
 export default function ThresholdsForm({ storeId, thresholds }: { storeId: string; thresholds: StoreThresholds }) {
@@ -173,33 +174,5 @@ function SaveButton() {
 }
 
 function asPercentage(value: number): string {
-  if (!Number.isFinite(value)) return "";
-
-  return shiftDecimal(value.toString(), 2) ?? "";
-}
-
-function shiftDecimal(raw: string, shift: number): string | null {
-  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
-  if (!match) return null;
-
-  const [, sign, integerPart, fractionPart = "", exponentText] = match;
-  const exponent = Number(exponentText ?? 0);
-  const digits = integerPart + fractionPart;
-  const decimalIndex = integerPart.length + exponent + shift;
-
-  if (decimalIndex <= 0) {
-    return `${sign === "-" ? "-" : ""}0.${"0".repeat(-decimalIndex)}${digits}`;
-  }
-  if (decimalIndex >= digits.length) {
-    return `${sign === "-" ? "-" : ""}${trimLeadingZeros(`${digits}${"0".repeat(decimalIndex - digits.length)}`)}`;
-  }
-
-  return `${sign === "-" ? "-" : ""}${trimLeadingZeros(`${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`)}`;
-}
-
-function trimLeadingZeros(value: string): string {
-  if (!value.includes(".")) return value.replace(/^0+(?=\d)/, "");
-
-  const [integerPart, fractionPart] = value.split(".");
-  return `${integerPart.replace(/^0+(?=\d)/, "")}.${fractionPart}`;
+  return decimalToPercentage(value);
 }

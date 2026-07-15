@@ -4,7 +4,7 @@ import { updateAlertPreferencesInputSchema } from "@eim/core";
 import { updateAlertPreferences } from "@eim/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { percentageToDecimal } from "./percentage";
+import { percentageToDecimal } from "../../../../lib/decimal";
 
 export type AlertPreferencesActionState = { error: string | null };
 

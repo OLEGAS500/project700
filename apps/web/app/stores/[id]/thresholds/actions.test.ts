@@ -70,6 +70,19 @@ describe("threshold server action", () => {
     expect(cache.revalidatePath.mock.calls).toEqual([[`/stores/${storeId}/thresholds`]]);
   });
 
+  it("rejects adversarial exponent input without escaping the validation boundary", async () => {
+    const result = await updateStoreThresholdsAction(
+      storeId,
+      initialState,
+      formData({ ...validValues(), catalogDropPercentage: "1e1000000000" })
+    );
+
+    expect(result).toEqual({ error: "Enter valid threshold values before saving." });
+    expect(database.updateStoreThresholds).not.toHaveBeenCalled();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+    expect(navigation.redirect).not.toHaveBeenCalled();
+  });
+
   it("maps a missing threshold record to a safe message", async () => {
     database.updateStoreThresholds.mockRejectedValue(
       new database.StoreThresholdsNotFoundError("missing")

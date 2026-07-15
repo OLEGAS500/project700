@@ -37,6 +37,19 @@ describe("alert preferences server action", () => {
     expect(database.updateAlertPreferences).not.toHaveBeenCalled();
   });
 
+  it("rejects adversarial exponent input without escaping the validation boundary", async () => {
+    const result = await updateAlertPreferencesAction(
+      storeId,
+      initialState,
+      formData({ worseningAffectedCountPercent: "1e1000000000" })
+    );
+
+    expect(result).toEqual({ error: "Enter valid alert preference values before saving." });
+    expect(database.updateAlertPreferences).not.toHaveBeenCalled();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+    expect(navigation.redirect).not.toHaveBeenCalled();
+  });
+
   it("saves the complete preference contract, revalidates, and redirects", async () => {
     database.updateAlertPreferences.mockResolvedValue({});
 
