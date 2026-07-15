@@ -493,6 +493,8 @@ Acceptance criteria:
 
 Milestone 8.1 dashboard read models and read-only API is complete and operationally verified. It adds isolated dashboard repositories for store summaries, keyset-paginated incident lists, and safe incident details; clean GitHub CI verified ordered migration replay, deterministic latest source checks, empty-store inclusion, incident status/severity/source filters, keyset pagination, store isolation, bounded samples, stable timeline/comments, and redacted alert-delivery and timeline metadata. The slice deliberately excludes dashboard UI, write actions, settings forms, polling, and new incident decisions.
 
+Milestone 8.2 stores overview UI is code-complete pending clean GitHub CI. `/dashboard` consumes the existing store-summary read model and presents aggregate store, active-incident, critical-incident, and source-check-issue counts alongside a compact store table. It distinguishes source-check failures from confirmed business incidents, handles loading, empty, and read-failure states without exposing database diagnostics, and links to the existing filtered incident and store-summary read endpoints. The slice deliberately excludes incident detail UI, write actions, polling, charts, authentication, and scheduling.
+
 ### Milestone 9: Merchant Center Integration
 
 Build:
