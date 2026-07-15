@@ -139,6 +139,9 @@ function StoreRow({ store }: { store: DashboardStoreSummary }) {
         <Link className="incident-list-link" href={`/stores/${store.id}/thresholds`}>
           Thresholds
         </Link>
+        <Link className="incident-list-link" href={`/stores/${store.id}/alert-preferences`}>
+          Alert preferences
+        </Link>
       </td>
     </tr>
   );
