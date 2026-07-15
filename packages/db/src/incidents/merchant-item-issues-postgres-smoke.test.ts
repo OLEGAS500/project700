@@ -260,4 +260,88 @@ describeIfDatabase("merchant item issue incident rule", () => {
     expect(counts.rows.every((row) => row.count === "1")).toBe(true);
     expect(new Set(counts.rows.map((row) => row.store_id)).size).toBe(2);
   });
+
+  it("does not turn a concurrent partial upsert into a business incident", async () => {
+    const {
+      connectMerchantCenter,
+      createOrUpdateMerchantItemIssuesIncident,
+      createQueuedSnapshot,
+      createStore,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Merchant Issue Race Store",
+      domain: "https://merchant-issue-race.example.com",
+      sitemapUrl: "https://merchant-issue-race.example.com/sitemap.xml",
+      feedUrl: "https://merchant-issue-race.example.com/feed.xml",
+      categoryUrls: ["https://merchant-issue-race.example.com/collections/all"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "789" });
+
+    const snapshot = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-race");
+    await persistMerchantCenterItemIssuesResult(
+      snapshot.id,
+      created.store.id,
+      issueResult([issueItem("offer:race", "invalid_gtin")])
+    );
+
+    const blocker = new Client({ connectionString: dbUrlWithSchema });
+    await blocker.connect();
+    await blocker.query("BEGIN");
+    await blocker.query(
+      `
+        SELECT id
+        FROM source_checks
+        WHERE snapshot_id = $1
+          AND store_id = $2
+          AND source = 'merchant_center'
+          AND metadata_json ->> 'merchantItemIssuesVersion' = 'v1'
+        FOR UPDATE
+      `,
+      [snapshot.id, created.store.id]
+    );
+
+    const evaluation = createOrUpdateMerchantItemIssuesIncident(created.store.id, snapshot.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const partialUpsert = persistMerchantCenterItemIssuesResult(
+      snapshot.id,
+      created.store.id,
+      issueResult([issueItem("offer:race", "invalid_gtin")], "partial")
+    );
+
+    await blocker.query("COMMIT");
+    await blocker.end();
+    await evaluation;
+    await partialUpsert;
+
+    const after = new Client({ connectionString: dbUrlWithSchema });
+    await after.connect();
+    const state = await after.query<{ check_status: string; incidents: string; candidates: string }>(
+      `
+        SELECT
+          (
+            SELECT status::text
+            FROM source_checks
+            WHERE snapshot_id = $1
+              AND source = 'merchant_center'
+              AND metadata_json ->> 'merchantItemIssuesVersion' = 'v1'
+          ) AS check_status,
+          (SELECT COUNT(*) FROM incidents WHERE store_id = $2 AND type = 'merchant_item_issues') AS incidents,
+          (
+            SELECT COUNT(*)
+            FROM incident_debounce_candidates
+            WHERE store_id = $2 AND type = 'merchant_item_issues' AND status = 'pending'
+          ) AS candidates
+      `,
+      [snapshot.id, created.store.id]
+    );
+    await after.end();
+
+    expect(state.rows[0].check_status).toBe("partial");
+    expect(state.rows[0].incidents).toBe("0");
+    expect(Number(state.rows[0].candidates)).toBeLessThanOrEqual(1);
+
+    await expect(createOrUpdateMerchantItemIssuesIncident(created.store.id, snapshot.id)).resolves.toBeNull();
+  });
 });

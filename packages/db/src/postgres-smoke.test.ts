@@ -190,23 +190,23 @@ describeIfDatabase("postgres smoke", () => {
       "0001_initial.sql",
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
-      "0003_merchant_item_issue_incidents.sql",
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
       "0007_dashboard_read_models.sql",
-      "0008_merchant_center_oauth.sql"
+      "0008_merchant_center_oauth.sql",
+      "0009_merchant_item_issue_incidents.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
       "0002_alert_delivery_worker.sql",
       "0003_alert_event_payloads.sql",
-      "0003_merchant_item_issue_incidents.sql",
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
       "0007_dashboard_read_models.sql",
-      "0008_merchant_center_oauth.sql"
+      "0008_merchant_center_oauth.sql",
+      "0009_merchant_item_issue_incidents.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });

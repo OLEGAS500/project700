@@ -120,7 +120,7 @@ export const alertPreferencesSchema = z
     enabled: z.boolean(),
     emailEnabled: z.boolean(),
     telegramEnabled: z.boolean(),
-    mutedIncidentTypes: z.array(incidentTypeSchema).max(5),
+    mutedIncidentTypes: z.array(incidentTypeSchema).max(incidentTypeSchema.options.length),
     notifyOnOpen: z.boolean(),
     notifyOnWorsening: z.boolean(),
     notifyOnRecovery: z.boolean(),

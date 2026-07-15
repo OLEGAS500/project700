@@ -171,24 +171,20 @@ export async function createOrUpdateMerchantItemIssuesIncident(
   storeId: string,
   snapshotId: string
 ): Promise<string | null> {
-  const observation = await getMerchantItemIssuesObservation(storeId, snapshotId);
-
-  if (
-    !observation ||
-    observation.status !== "success" ||
-    !observation.configurationHash
-  ) {
-    return null;
-  }
-
-  const evaluation = buildMerchantItemIssuesEvaluation(
-    await getMerchantItemIssueProducts(storeId, snapshotId)
-  );
-  const configurationHash = observation.configurationHash;
-  const fingerprint = merchantItemIssuesFingerprint(storeId, configurationHash);
-
   return withTransaction(async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [fingerprint]);
+    await lockMerchantItemIssuesRule(client, storeId);
+
+    const read = await readMerchantItemIssuesObservation(storeId, snapshotId, client, true);
+    if (!read || read.observation.status !== "success" || !read.observation.configurationHash) {
+      return null;
+    }
+
+    const { observation, evaluation } = read;
+    const configurationHash = observation.configurationHash;
+    if (configurationHash === null) {
+      return null;
+    }
+    const fingerprint = merchantItemIssuesFingerprint(storeId, configurationHash);
 
     const activeIncident = await getActiveMerchantItemIssuesIncident(
       client,
@@ -267,11 +263,14 @@ export async function updateMerchantItemIssuesRecovery(
   snapshotId: string
 ): Promise<CatalogDropRecoveryResult[]> {
   return withTransaction(async (client) => {
-    const observation = await getMerchantItemIssuesObservation(storeId, snapshotId, client);
+    await lockMerchantItemIssuesRule(client, storeId);
+    const read = await readMerchantItemIssuesObservation(storeId, snapshotId, client, true);
 
-    if (!observation || observation.status !== "success" || !observation.configurationHash) {
+    if (!read || read.observation.status !== "success" || !read.observation.configurationHash) {
       return [];
     }
+
+    const { observation } = read;
 
     const incidents = await getRecoverableMerchantItemIssuesIncidents(storeId, client);
     const results: CatalogDropRecoveryResult[] = [];
@@ -318,6 +317,20 @@ export async function getMerchantItemIssuesObservation(
   snapshotId: string,
   executor: pg.Pool | pg.PoolClient = getPool()
 ): Promise<MerchantItemIssuesObservation | null> {
+  const read = await readMerchantItemIssuesObservation(storeId, snapshotId, executor, false);
+  return read?.observation ?? null;
+}
+
+async function readMerchantItemIssuesObservation(
+  storeId: string,
+  snapshotId: string,
+  executor: pg.Pool | pg.PoolClient,
+  lockSourceCheck: boolean
+): Promise<{
+  observation: MerchantItemIssuesObservation;
+  evaluation: MerchantItemIssuesEvaluation;
+} | null> {
+  const lockClause = lockSourceCheck ? "\n      FOR UPDATE OF source_checks" : "";
   const checkResult = await executor.query<MerchantItemIssuesCheckRow>(
     `
       SELECT
@@ -333,7 +346,7 @@ export async function getMerchantItemIssuesObservation(
        AND source_checks.source = 'merchant_center'
        AND source_checks.metadata_json ->> 'merchantItemIssuesVersion' = $3
       WHERE snapshots.id = $2 AND snapshots.store_id = $1
-      LIMIT 1
+      LIMIT 1${lockClause}
     `,
     [storeId, snapshotId, merchantItemIssuesVersion]
   );
@@ -348,17 +361,29 @@ export async function getMerchantItemIssuesObservation(
   const evaluation = buildMerchantItemIssuesEvaluation(products);
 
   return {
-    snapshotId: check.snapshot_id,
-    storeId: check.store_id,
-    status: check.status,
-    configurationHash,
-    affectedProducts: evaluation.affectedProducts,
-    issueCount: evaluation.issueCount,
-    criticalProducts: evaluation.criticalProducts,
-    warningProducts: evaluation.warningProducts,
-    issueCodes: evaluation.issueCodes,
-    sampleItems: evaluation.sampleItems
+    observation: {
+      snapshotId: check.snapshot_id,
+      storeId: check.store_id,
+      status: check.status,
+      configurationHash,
+      affectedProducts: evaluation.affectedProducts,
+      issueCount: evaluation.issueCount,
+      criticalProducts: evaluation.criticalProducts,
+      warningProducts: evaluation.warningProducts,
+      issueCodes: evaluation.issueCodes,
+      sampleItems: evaluation.sampleItems
+    },
+    evaluation
   };
+}
+
+async function lockMerchantItemIssuesRule(
+  client: pg.PoolClient,
+  storeId: string
+): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    `merchant_item_issues_rule:${storeId}`
+  ]);
 }
 
 async function getMerchantItemIssueProducts(
