@@ -4,6 +4,7 @@ import {
   createStoreInputSchema,
   emailDestinationInputSchema,
   incidentLikelySourceSchema,
+  merchantCenterConnectionInputSchema,
   sourceCheckStatusSchema,
   telegramDestinationInputSchema,
   updateAlertPreferencesInputSchema,
@@ -158,6 +159,22 @@ describe("core schemas", () => {
         recipientEmails: ["alerts@example.com"],
         enabled: true,
         providerApiKey: "must-not-be-accepted"
+      }).success
+    ).toBe(false);
+  });
+
+  it("validates Merchant Center account connections without accepting credentials", () => {
+    expect(
+      merchantCenterConnectionInputSchema.parse({ merchantCenterAccountId: " 123456789 " })
+    ).toEqual({ merchantCenterAccountId: "123456789" });
+    expect(
+      merchantCenterConnectionInputSchema.safeParse({ merchantCenterAccountId: "merchant-id" })
+        .success
+    ).toBe(false);
+    expect(
+      merchantCenterConnectionInputSchema.safeParse({
+        merchantCenterAccountId: "123456789",
+        accessToken: "must-not-be-accepted"
       }).success
     ).toBe(false);
   });

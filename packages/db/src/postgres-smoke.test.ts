@@ -28,6 +28,12 @@ import {
   getEmailDestination,
   upsertEmailDestination
 } from "./email-destinations";
+import {
+  connectMerchantCenter,
+  disconnectMerchantCenter,
+  getMerchantCenterConnection,
+  MerchantCenterStoreNotFoundError
+} from "./merchant-center";
 import { applyMigrations } from "./migrations";
 import {
   acknowledgeIncident,
@@ -211,6 +217,53 @@ describeIfDatabase("postgres smoke", () => {
     await client.end();
 
     expect(Number(result.rows[0].count)).toBe(0);
+  });
+
+  it("stores and clears Merchant Center account connections without credentials", async () => {
+    const created = await createStore({
+      name: "Merchant Connection Store",
+      domain: "https://merchant-connection.example.com",
+      sitemapUrl: "https://merchant-connection.example.com/sitemap.xml",
+      feedUrl: "https://merchant-connection.example.com/feed.xml",
+      categoryUrls: ["https://merchant-connection.example.com/collections/all"]
+    });
+
+    await expect(getMerchantCenterConnection(created.store.id)).resolves.toEqual({
+      storeId: created.store.id,
+      merchantCenterAccountId: null,
+      connected: false
+    });
+
+    const connected = await connectMerchantCenter(created.store.id, {
+      merchantCenterAccountId: " 123456789 "
+    });
+    expect(connected).toEqual({
+      storeId: created.store.id,
+      merchantCenterAccountId: "123456789",
+      connected: true
+    });
+
+    const reconnected = await connectMerchantCenter(created.store.id, {
+      merchantCenterAccountId: "987654321"
+    });
+    expect(reconnected).toMatchObject({
+      storeId: created.store.id,
+      merchantCenterAccountId: "987654321",
+      connected: true
+    });
+
+    const disconnected = await disconnectMerchantCenter(created.store.id);
+    expect(disconnected).toEqual({
+      storeId: created.store.id,
+      merchantCenterAccountId: null,
+      connected: false
+    });
+
+    await expect(
+      connectMerchantCenter("70000000-0000-4000-8000-000000000099", {
+        merchantCenterAccountId: "123456789"
+      })
+    ).rejects.toBeInstanceOf(MerchantCenterStoreNotFoundError);
   });
 
   it("recalculates, confirms, and invalidates feed product count baseline", async () => {
