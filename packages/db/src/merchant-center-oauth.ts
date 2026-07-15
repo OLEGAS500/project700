@@ -24,6 +24,7 @@ type CredentialRow = {
   credentials_version: number;
   refresh_lock_id: string | null;
   refresh_lock_expires_at: Date | null;
+  refresh_in_progress?: boolean;
   created_at: Date;
   updated_at: Date;
 };
@@ -181,7 +182,15 @@ export async function getMerchantCenterOAuthCredentials(
   executor: pg.Pool | pg.PoolClient = getPool()
 ): Promise<MerchantCenterOAuthCredentialRecord | null> {
   const result = await executor.query<CredentialRow>(
-    "SELECT * FROM merchant_center_oauth_credentials WHERE store_id = $1",
+    `
+      SELECT credentials.*,
+        (
+          credentials.refresh_lock_id IS NOT NULL
+          AND credentials.refresh_lock_expires_at > clock_timestamp()
+        ) AS refresh_in_progress
+      FROM merchant_center_oauth_credentials AS credentials
+      WHERE credentials.store_id = $1
+    `,
     [storeId]
   );
   const row = result.rows[0];
@@ -195,7 +204,11 @@ export async function getMerchantCenterOAuthStatus(
 ): Promise<MerchantCenterOAuthStatusRecord | null> {
   const result = await executor.query<CredentialRow>(
     `
-      SELECT credentials.*
+      SELECT credentials.*,
+        (
+          credentials.refresh_lock_id IS NOT NULL
+          AND credentials.refresh_lock_expires_at > clock_timestamp()
+        ) AS refresh_in_progress
       FROM stores
       LEFT JOIN merchant_center_oauth_credentials AS credentials
         ON credentials.store_id = stores.id
@@ -450,7 +463,11 @@ function mapCredentialRecord(row: CredentialRow): MerchantCenterOAuthCredentialR
     scopes: row.scopes,
     metadata: parseMetadata(row.metadata_json),
     credentialsVersion: row.credentials_version,
-    refreshInProgress: row.refresh_lock_id !== null,
+    refreshInProgress:
+      row.refresh_in_progress ??
+      (row.refresh_lock_id !== null &&
+        row.refresh_lock_expires_at !== null &&
+        row.refresh_lock_expires_at.getTime() > Date.now()),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString()
   };

@@ -38,6 +38,7 @@ describe("Merchant Center controls", () => {
     );
 
     expect(html).toContain("Refresh credentials");
+    expect(html).toContain(">Refresh credentials</button>");
     expect(html).toContain("Disconnect");
     expect(html).not.toContain("access-secret");
     expect(html).not.toContain("refresh-secret");
