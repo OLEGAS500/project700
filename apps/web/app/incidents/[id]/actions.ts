@@ -12,8 +12,8 @@ import {
   IncidentActionConflictError,
   IncidentNotFoundError
 } from "@eim/db";
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { revalidateIncidentViews } from "./view-cache";
 
 export type IncidentActionState = {
   error: string | null;
@@ -37,7 +37,7 @@ export async function acknowledgeIncidentAction(
     return { error: actionErrorMessage(error, "The incident could not be acknowledged.") };
   }
 
-  revalidatePath(`/incidents/${incidentId}`);
+  revalidateIncidentViews(incidentId, { summariesChanged: true });
   redirect(`/incidents/${incidentId}`);
 }
 
@@ -59,7 +59,7 @@ export async function ignoreIncidentAction(
     return { error: actionErrorMessage(error, "The incident could not be ignored.") };
   }
 
-  revalidatePath(`/incidents/${incidentId}`);
+  revalidateIncidentViews(incidentId, { summariesChanged: true });
   redirect(`/incidents/${incidentId}`);
 }
 
@@ -81,7 +81,7 @@ export async function addIncidentCommentAction(
     return { error: actionErrorMessage(error, "The comment could not be added.") };
   }
 
-  revalidatePath(`/incidents/${incidentId}`);
+  revalidateIncidentViews(incidentId, { summariesChanged: false });
   redirect(`/incidents/${incidentId}`);
 }
 
