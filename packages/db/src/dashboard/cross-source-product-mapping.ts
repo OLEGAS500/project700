@@ -35,6 +35,7 @@ export type CrossSourceProductMatchSummary = {
   incompatibilityReason:
     | "source_check_missing"
     | "source_check_incomplete"
+    | "merchant_identity_inventory_missing"
     | "merchant_configuration_mismatch"
     | null;
   feedCheckStatus: string | null;
@@ -54,6 +55,7 @@ export type CrossSourceProductMatchSummary = {
 
 const merchantItemIssuesVersion = "v1";
 const merchantItemIssuesCheckKey = "merchant_center:item_issues";
+const merchantProductIdentityVersion = "v1";
 const maximumSampleCountPerStatus = 50;
 const maximumOutputTextLength = 256;
 const maximumTotalCount = 1_000_000;
@@ -65,6 +67,8 @@ type SnapshotContextRow = {
   feed_check_status: string | null;
   merchant_check_status: string | null;
   merchant_item_issues_version: string | null;
+  merchant_product_identity_version: string | null;
+  merchant_product_identity_complete: boolean | null;
   merchant_configuration_hash: string | null;
 };
 
@@ -109,6 +113,10 @@ export async function getCrossSourceProductMatchSummary(
           merchant_check.status::text AS merchant_check_status,
           merchant_check.metadata_json ->> 'merchantItemIssuesVersion'
             AS merchant_item_issues_version,
+          merchant_check.metadata_json ->> 'merchantProductIdentityVersion'
+            AS merchant_product_identity_version,
+          merchant_check.metadata_json ->> 'merchantProductIdentityComplete' = 'true'
+            AS merchant_product_identity_complete,
           merchant_check.metadata_json ->> 'merchantItemIssuesConfigurationHash'
             AS merchant_configuration_hash
         FROM snapshots
@@ -157,11 +165,16 @@ export async function getCrossSourceProductMatchSummary(
       merchantContext.merchant_item_issues_version === merchantItemIssuesVersion &&
       /^[0-9a-f]{64}$/.test(merchantContext.merchant_configuration_hash ?? "") &&
       merchantContext.merchant_configuration_hash === configurationHash;
+    const hasCompleteMerchantIdentityInventory =
+      merchantContext.merchant_product_identity_version === merchantProductIdentityVersion &&
+      merchantContext.merchant_product_identity_complete === true;
 
     const incompatibilityReason = !hasSourceChecks
       ? "source_check_missing"
       : !sourceChecksComplete
         ? "source_check_incomplete"
+        : !hasCompleteMerchantIdentityInventory
+          ? "merchant_identity_inventory_missing"
         : !configurationMatches
           ? "merchant_configuration_mismatch"
           : null;
@@ -178,7 +191,11 @@ export async function getCrossSourceProductMatchSummary(
       });
     }
 
-    const queryValues = [input.feedSnapshotId, input.merchantSnapshotId];
+    const queryValues = [
+      input.feedSnapshotId,
+      input.merchantSnapshotId,
+      merchantContext.merchant_configuration_hash
+    ];
     const countResult = await client.query<MatchCountRow>(
       `${buildMappingCtes()}
        SELECT
@@ -268,13 +285,14 @@ export async function getCrossSourceProductMatchSummary(
   });
 }
 
-export function normalizeCrossSourceIdentity(input: {
-  offerId?: string | null;
-  stableKey: string;
-}): string {
-  const offerId = input.offerId?.trim().toLowerCase();
-  if (offerId) return `offer:${offerId}`;
-  return `stable:${input.stableKey.trim().toLowerCase()}`;
+export function normalizeCrossSourceOfferId(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+export function normalizeCrossSourceStableKey(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
 }
 
 function emptySummary(input: {
@@ -340,16 +358,14 @@ function boundedCount(value: string): { value: number; truncated: boolean } {
 
 function buildMappingCtes(): string {
   return `
-    WITH feed_items AS (
+    WITH feed_records AS (
       SELECT
-        source_items.id,
-        CASE
-          WHEN NULLIF(BTRIM(source_items.offer_id), '') IS NOT NULL
-            THEN 'offer:' || LOWER(BTRIM(source_items.offer_id))
-          ELSE 'stable:' || LOWER(BTRIM(source_items.stable_key))
-        END AS identity_key,
-        LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key,
-        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id,
+        source_items.id::text AS row_id,
+        'feed'::text AS side,
+        NULLIF(LOWER(BTRIM(source_items.offer_id)), '') AS offer_key,
+        NULLIF(LOWER(BTRIM(source_items.stable_key)), '') AS stable_key,
+        LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key_display,
+        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id_display,
         LEFT(NULLIF(BTRIM(source_items.title), ''), ${maximumOutputTextLength}) AS title
       FROM source_items
       JOIN snapshots AS feed_snapshot
@@ -358,16 +374,14 @@ function buildMappingCtes(): string {
       WHERE source_items.snapshot_id = $1
         AND source_items.source = 'feed'
     ),
-    merchant_items AS (
+    merchant_records AS (
       SELECT
-        source_items.id,
-        CASE
-          WHEN NULLIF(BTRIM(source_items.offer_id), '') IS NOT NULL
-            THEN 'offer:' || LOWER(BTRIM(source_items.offer_id))
-          ELSE 'stable:' || LOWER(BTRIM(source_items.stable_key))
-        END AS identity_key,
-        LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key,
-        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id,
+        source_items.id::text AS row_id,
+        'merchant'::text AS side,
+        NULLIF(LOWER(BTRIM(source_items.offer_id)), '') AS offer_key,
+        NULLIF(LOWER(BTRIM(source_items.stable_key)), '') AS stable_key,
+        LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key_display,
+        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id_display,
         LEFT(NULLIF(BTRIM(source_items.title), ''), ${maximumOutputTextLength}) AS title
       FROM source_items
       JOIN snapshots AS merchant_snapshot
@@ -375,52 +389,189 @@ function buildMappingCtes(): string {
        AND merchant_snapshot.store_id = source_items.store_id
       WHERE source_items.snapshot_id = $2
         AND source_items.source = 'merchant_center'
-        AND source_items.metadata_json ->> 'merchantDataKind' = 'item_issues'
+        AND source_items.metadata_json ->> 'merchantDataKind' = 'product_identity'
+        AND source_items.metadata_json ->> 'merchantProductIdentityVersion' = 'v1'
+        AND source_items.metadata_json ->> 'merchantItemIssuesConfigurationHash' = $3
     ),
-    feed_groups AS (
+    all_records AS (
       SELECT
-        identity_key,
-        COUNT(*) AS feed_count,
-        MIN(stable_key) AS feed_stable_key,
-        MIN(offer_id) AS feed_offer_id,
-        MIN(title) AS feed_title
-      FROM feed_items
-      GROUP BY identity_key
+        row_id,
+        side,
+        offer_key,
+        stable_key,
+        stable_key_display,
+        offer_id_display,
+        title
+      FROM feed_records
+      UNION ALL
+      SELECT
+        row_id,
+        side,
+        offer_key,
+        stable_key,
+        stable_key_display,
+        offer_id_display,
+        title
+      FROM merchant_records
     ),
-    merchant_groups AS (
+    offer_groups AS (
       SELECT
-        identity_key,
-        COUNT(*) AS merchant_count,
-        MIN(stable_key) AS merchant_stable_key,
-        MIN(offer_id) AS merchant_offer_id,
-        MIN(title) AS merchant_title
-      FROM merchant_items
-      GROUP BY identity_key
+        offer_key,
+        COUNT(*) FILTER (WHERE side = 'feed') AS feed_count,
+        COUNT(*) FILTER (WHERE side = 'merchant') AS merchant_count,
+        MIN(stable_key_display) FILTER (WHERE side = 'feed') AS feed_stable_key,
+        MIN(offer_id_display) FILTER (WHERE side = 'feed') AS feed_offer_id,
+        MIN(title) FILTER (WHERE side = 'feed') AS feed_title,
+        MIN(stable_key_display) FILTER (WHERE side = 'merchant') AS merchant_stable_key,
+        MIN(offer_id_display) FILTER (WHERE side = 'merchant') AS merchant_offer_id,
+        MIN(title) FILTER (WHERE side = 'merchant') AS merchant_title
+      FROM all_records
+      WHERE offer_key IS NOT NULL
+      GROUP BY offer_key
     ),
-    classified_matches AS (
+    resolved_offer_groups AS (
       SELECT
-        COALESCE(feed_groups.identity_key, merchant_groups.identity_key) AS identity_key,
-        COALESCE(feed_groups.feed_count, 0) AS feed_count,
-        COALESCE(merchant_groups.merchant_count, 0) AS merchant_count,
-        feed_groups.feed_stable_key,
-        feed_groups.feed_offer_id,
-        feed_groups.feed_title,
-        merchant_groups.merchant_stable_key,
-        merchant_groups.merchant_offer_id,
-        merchant_groups.merchant_title,
+        offer_groups.*,
         CASE
-          WHEN COALESCE(feed_groups.feed_count, 0) > 1
-            OR COALESCE(merchant_groups.merchant_count, 0) > 1
+          WHEN feed_count > 1 OR merchant_count > 1
             THEN 'ambiguous'
-          WHEN feed_groups.identity_key IS NOT NULL
-            AND merchant_groups.identity_key IS NOT NULL
+          WHEN feed_count = 1 AND merchant_count = 1
             THEN 'matched'
-          WHEN feed_groups.identity_key IS NOT NULL
-            THEN 'feed_only'
+          ELSE NULL
+        END AS status
+      FROM offer_groups
+    ),
+    offer_classifications AS (
+      SELECT
+        'offer:' || offer_key AS identity_key,
+        feed_count,
+        merchant_count,
+        feed_stable_key,
+        feed_offer_id,
+        feed_title,
+        merchant_stable_key,
+        merchant_offer_id,
+        merchant_title,
+        status
+      FROM resolved_offer_groups
+      WHERE status IS NOT NULL
+    ),
+    remaining_records AS (
+      SELECT all_records.*
+      FROM all_records
+      LEFT JOIN resolved_offer_groups
+        ON resolved_offer_groups.offer_key = all_records.offer_key
+      WHERE resolved_offer_groups.status IS NULL
+    ),
+    stable_groups AS (
+      SELECT
+        stable_key,
+        COUNT(*) FILTER (WHERE side = 'feed') AS feed_count,
+        COUNT(*) FILTER (WHERE side = 'merchant') AS merchant_count,
+        MIN(offer_key) FILTER (WHERE side = 'feed') AS feed_offer_key,
+        MIN(offer_key) FILTER (WHERE side = 'merchant') AS merchant_offer_key,
+        MIN(stable_key_display) FILTER (WHERE side = 'feed') AS feed_stable_key,
+        MIN(offer_id_display) FILTER (WHERE side = 'feed') AS feed_offer_id,
+        MIN(title) FILTER (WHERE side = 'feed') AS feed_title,
+        MIN(stable_key_display) FILTER (WHERE side = 'merchant') AS merchant_stable_key,
+        MIN(offer_id_display) FILTER (WHERE side = 'merchant') AS merchant_offer_id,
+        MIN(title) FILTER (WHERE side = 'merchant') AS merchant_title
+      FROM remaining_records
+      WHERE stable_key IS NOT NULL
+      GROUP BY stable_key
+    ),
+    stable_classifications AS (
+      SELECT
+        CASE
+          WHEN feed_count = 1 AND merchant_count = 0
+            THEN COALESCE('offer:' || feed_offer_key, 'stable:' || stable_key)
+          WHEN feed_count = 0 AND merchant_count = 1
+            THEN COALESCE('offer:' || merchant_offer_key, 'stable:' || stable_key)
+          ELSE 'stable:' || stable_key
+        END AS identity_key,
+        feed_count,
+        merchant_count,
+        feed_stable_key,
+        feed_offer_id,
+        feed_title,
+        merchant_stable_key,
+        merchant_offer_id,
+        merchant_title,
+        CASE
+          WHEN feed_count > 1 OR merchant_count > 1 THEN 'ambiguous'
+          WHEN feed_count = 1 AND merchant_count = 1 THEN 'matched'
+          WHEN feed_count = 1 THEN 'feed_only'
           ELSE 'merchant_only'
         END::text AS status
-      FROM feed_groups
-      FULL OUTER JOIN merchant_groups USING (identity_key)
+      FROM stable_groups
+      WHERE NOT (
+        feed_count = 1
+        AND merchant_count = 1
+        AND feed_offer_key IS NOT NULL
+        AND merchant_offer_key IS NOT NULL
+        AND feed_offer_key <> merchant_offer_key
+      )
+    ),
+    stable_offer_disagreements AS (
+      SELECT
+        'offer:' || feed_offer_key AS identity_key,
+        1::bigint AS feed_count,
+        0::bigint AS merchant_count,
+        feed_stable_key,
+        feed_offer_id,
+        feed_title,
+        NULL::text AS merchant_stable_key,
+        NULL::text AS merchant_offer_id,
+        NULL::text AS merchant_title,
+        'feed_only'::text AS status
+      FROM stable_groups
+      WHERE feed_count = 1
+        AND merchant_count = 1
+        AND feed_offer_key IS NOT NULL
+        AND merchant_offer_key IS NOT NULL
+        AND feed_offer_key <> merchant_offer_key
+      UNION ALL
+      SELECT
+        'offer:' || merchant_offer_key AS identity_key,
+        0::bigint AS feed_count,
+        1::bigint AS merchant_count,
+        NULL::text AS feed_stable_key,
+        NULL::text AS feed_offer_id,
+        NULL::text AS feed_title,
+        merchant_stable_key,
+        merchant_offer_id,
+        merchant_title,
+        'merchant_only'::text AS status
+      FROM stable_groups
+      WHERE feed_count = 1
+        AND merchant_count = 1
+        AND feed_offer_key IS NOT NULL
+        AND merchant_offer_key IS NOT NULL
+        AND feed_offer_key <> merchant_offer_key
+    ),
+    unidentified_classifications AS (
+      SELECT
+        COALESCE('offer:' || offer_key, 'unidentified:' || row_id) AS identity_key,
+        CASE WHEN side = 'feed' THEN 1::bigint ELSE 0::bigint END AS feed_count,
+        CASE WHEN side = 'merchant' THEN 1::bigint ELSE 0::bigint END AS merchant_count,
+        CASE WHEN side = 'feed' THEN stable_key_display ELSE NULL::text END AS feed_stable_key,
+        CASE WHEN side = 'feed' THEN offer_id_display ELSE NULL::text END AS feed_offer_id,
+        CASE WHEN side = 'feed' THEN title ELSE NULL::text END AS feed_title,
+        CASE WHEN side = 'merchant' THEN stable_key_display ELSE NULL::text END AS merchant_stable_key,
+        CASE WHEN side = 'merchant' THEN offer_id_display ELSE NULL::text END AS merchant_offer_id,
+        CASE WHEN side = 'merchant' THEN title ELSE NULL::text END AS merchant_title,
+        CASE WHEN offer_key IS NULL THEN 'ambiguous' ELSE side || '_only' END AS status
+      FROM remaining_records
+      WHERE stable_key IS NULL
+    ),
+    classified_matches AS (
+      SELECT * FROM offer_classifications
+      UNION ALL
+      SELECT * FROM stable_classifications
+      UNION ALL
+      SELECT * FROM stable_offer_disagreements
+      UNION ALL
+      SELECT * FROM unidentified_classifications
     )`;
 }
 

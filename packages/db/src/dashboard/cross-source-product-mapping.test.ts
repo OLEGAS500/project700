@@ -1,32 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { normalizeCrossSourceIdentity } from "./cross-source-product-mapping";
+import {
+  normalizeCrossSourceOfferId,
+  normalizeCrossSourceStableKey
+} from "./cross-source-product-mapping";
 
 describe("cross-source product identity", () => {
   it("normalizes offer IDs by trimming and lowercasing", () => {
-    expect(
-      normalizeCrossSourceIdentity({
-        offerId: "  SKU-ABC  ",
-        stableKey: "offer:ignored"
-      })
-    ).toBe("offer:sku-abc");
+    expect(normalizeCrossSourceOfferId("  SKU-ABC  ")).toBe("sku-abc");
   });
 
-  it("uses the existing stable key only when offer ID is unavailable", () => {
-    expect(
-      normalizeCrossSourceIdentity({
-        offerId: "   ",
-        stableKey: "  HASH:Unicode-Product  "
-      })
-    ).toBe("stable:hash:unicode-product");
+  it("keeps an absent offer distinct from the stable-key fallback", () => {
+    expect(normalizeCrossSourceOfferId("   ")).toBeNull();
+    expect(normalizeCrossSourceStableKey("  HASH:Unicode-Product  ")).toBe(
+      "hash:unicode-product"
+    );
   });
 
   it("keeps Unicode identity values deterministic", () => {
-    expect(
-      normalizeCrossSourceIdentity({
-        offerId: "  Ä-товар😀  ",
-        stableKey: "offer:unused"
-      })
-    ).toBe("offer:ä-товар😀");
+    expect(normalizeCrossSourceOfferId("  Ä-товар😀  ")).toBe("ä-товар😀");
+    expect(normalizeCrossSourceStableKey("  Stable:Товар😀  ")).toBe("stable:товар😀");
   });
 
   it("does not send malformed snapshot identifiers to PostgreSQL", async () => {

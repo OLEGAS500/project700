@@ -188,6 +188,8 @@ function buildResult(
     items,
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantProductIdentityVersion: "v1",
+      merchantProductIdentityComplete: true,
       merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId),
       productsSeen: items.length,
       productsWithIssues: items.length,

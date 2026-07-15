@@ -274,6 +274,39 @@ describe("collectMerchantCenterItemIssues", () => {
     });
   });
 
+  it("emits a complete product identity inventory when no products have issues", async () => {
+    const result = await collectMerchantCenterItemIssues({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ products: [product("HEALTHY-1", [])] }), { status: 200 }),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      itemsObserved: 0,
+      totalItemsSeen: 1,
+      items: [
+        expect.objectContaining({
+          stableKey: "offer:healthy-1",
+          offerId: "HEALTHY-1",
+          metadata: expect.objectContaining({
+            merchantDataKind: "product_identity",
+            merchantProductIdentityVersion: "v1",
+            merchantItemIssuesConfigurationHash: expect.any(String)
+          })
+        })
+      ],
+      metadata: expect.objectContaining({
+        merchantProductIdentityVersion: "v1",
+        merchantProductIdentityComplete: true,
+        productsWithIssues: 0
+      })
+    });
+    expect(result.items[0]?.merchantIssues).toBeUndefined();
+  });
+
   it("classifies a malformed products response as parse_failed", async () => {
     const result = await collectMerchantCenterItemIssues({
       storeId: "store-1",

@@ -8,6 +8,8 @@ import {
   createQueuedSnapshot,
   getSnapshotStore,
   merchantItemIssuesConfigurationHash,
+  merchantProductIdentityDataKind,
+  merchantProductIdentityVersion,
   persistMerchantCenterItemIssuesResult,
   type SnapshotRecord
 } from "@eim/db";
@@ -544,9 +546,9 @@ function buildProductResult(
     paginationError?: { errorCode: string; errorMessage: string };
   }
 ): SourceCheckResult {
-  const items = [...products.values()]
-    .filter((product) => product.issues.length > 0)
-    .map(toSourceItem);
+  const normalizedProducts = [...products.values()];
+  const issueProducts = normalizedProducts.filter((product) => product.issues.length > 0);
+  const items = normalizedProducts.map(toSourceItem);
   const partial =
     details.skippedProducts > 0 ||
     details.invalidIssueCount > 0 ||
@@ -561,7 +563,7 @@ function buildProductResult(
   return buildResult(input.startedAt, input.endpoint, {
     status: partial ? "partial" : "success",
     httpStatus: details.httpStatus,
-    itemsObserved: items.length,
+    itemsObserved: issueProducts.length,
     totalItemsSeen: details.productsSeen,
     skippedItems: details.skippedProducts + details.invalidIssueCount,
     errorCode: details.paginationError?.errorCode ?? (partial ? errorSamples[0] : undefined),
@@ -571,8 +573,10 @@ function buildProductResult(
     items,
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantProductIdentityVersion,
+      merchantProductIdentityComplete: !partial,
       productsSeen: details.productsSeen,
-      productsWithIssues: items.length,
+      productsWithIssues: issueProducts.length,
       issuesObserved: items.reduce((count, item) => count + (item.merchantIssues?.length ?? 0), 0),
       invalidIssueCount: details.invalidIssueCount,
       pagination: {
@@ -632,10 +636,10 @@ function toSourceItem(product: NormalizedMerchantCenterProduct): SourceItemInput
     offerId: product.offerId,
     title: product.title,
     merchantStatus: product.merchantStatus,
-    merchantIssues: product.issues,
+    ...(product.issues.length > 0 ? { merchantIssues: product.issues } : {}),
     metadata: {
-      merchantDataKind: "item_issues",
-      productName: product.productName
+      merchantDataKind: merchantProductIdentityDataKind,
+      merchantProductIdentityVersion
     },
     rawHash: product.rawHash
   };
@@ -787,11 +791,20 @@ function addConfigurationMetadata(
 ): SourceCheckResult {
   if (!accountId) return result;
 
+  const configurationHash = merchantItemIssuesConfigurationHash(accountId);
+
   return {
     ...result,
+    items: result.items.map((item) => ({
+      ...item,
+      metadata: {
+        ...(item.metadata ?? {}),
+        merchantItemIssuesConfigurationHash: configurationHash
+      }
+    })),
     metadata: {
       ...(isRecord(result.metadata) ? result.metadata : {}),
-      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId)
+      merchantItemIssuesConfigurationHash: configurationHash
     }
   };
 }

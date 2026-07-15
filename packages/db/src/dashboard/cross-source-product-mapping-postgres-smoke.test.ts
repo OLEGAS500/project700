@@ -33,21 +33,26 @@ function feedItem(
 function merchantItem(
   stableKey: string,
   offerId: string | undefined,
-  title = `Merchant ${stableKey}`
+  title = `Merchant ${stableKey}`,
+  hasIssue = true
 ): SourceItemInput {
   return {
     source: "merchant_center",
     stableKey,
     offerId,
     title,
-    merchantStatus: "disapproved",
-    merchantIssues: [
-      {
-        code: "invalid_gtin",
-        severity: "error",
-        attribute: "gtin"
-      }
-    ],
+    merchantStatus: hasIssue ? "disapproved" : "approved",
+    ...(hasIssue
+      ? {
+          merchantIssues: [
+            {
+              code: "invalid_gtin",
+              severity: "error",
+              attribute: "gtin"
+            }
+          ]
+        }
+      : {}),
     metadata: {
       merchantDataKind: "item_issues",
       productName: `accounts/123/products/${stableKey}`
@@ -86,7 +91,7 @@ function merchantResult(
     startedAt: "2026-07-15T12:00:00.000Z",
     finishedAt: "2026-07-15T12:00:01.000Z",
     durationMs: 1_000,
-    itemsObserved: items.length,
+    itemsObserved: items.filter((item) => item.merchantIssues?.length).length,
     totalItemsSeen: items.length,
     skippedItems: status === "success" ? 0 : 1,
     items,
@@ -94,8 +99,10 @@ function merchantResult(
     errorMessage: status === "success" ? undefined : "Merchant snapshot was partial.",
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantProductIdentityVersion: "v1",
+      merchantProductIdentityComplete: status === "success",
       merchantItemIssuesConfigurationHash: merchantConfigurationHash(accountId),
-      merchantDataKind: "item_issues"
+      merchantDataKind: "product_identity"
     }
   };
 }
@@ -264,6 +271,32 @@ describeIfDatabase("cross-source product mapping", () => {
       ambiguousCount: 0
     });
 
+    const legacyIssueOnlySnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-merchant-legacy-issue-only"
+    );
+    const legacyIssueOnlyResult = merchantResult([
+      merchantItem("offer:legacy-issue-only", "legacy-issue-only")
+    ]);
+    const legacyMetadata = { ...(legacyIssueOnlyResult.metadata ?? {}) };
+    delete legacyMetadata.merchantProductIdentityVersion;
+    delete legacyMetadata.merchantProductIdentityComplete;
+    await persistMerchantCenterItemIssuesResult(
+      legacyIssueOnlySnapshot.id,
+      created.store.id,
+      { ...legacyIssueOnlyResult, metadata: legacyMetadata }
+    );
+    await expect(
+      getCrossSourceProductMatchSummary({
+        feedSnapshotId: feedSnapshot.id,
+        merchantSnapshotId: legacyIssueOnlySnapshot.id
+      })
+    ).resolves.toMatchObject({
+      comparable: false,
+      incompatibilityReason: "merchant_identity_inventory_missing"
+    });
+
     const configurationSnapshot = await createQueuedSnapshot(
       created.store.id,
       "normal_check",
@@ -313,5 +346,227 @@ describeIfDatabase("cross-source product mapping", () => {
     ).resolves.toBeNull();
 
     expect(merchantItemIssuesConfigurationHash("123")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("maps the full Merchant inventory even when only a small subset has issues", async () => {
+    const {
+      connectMerchantCenter,
+      createQueuedSnapshot,
+      createStore,
+      getCrossSourceProductMatchSummary,
+      persistFeedCheckResult,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Cross-source full inventory store",
+      domain: "https://cross-source-inventory.example.test",
+      sitemapUrl: "https://cross-source-inventory.example.test/sitemap.xml",
+      feedUrl: "https://cross-source-inventory.example.test/feed.xml",
+      categoryUrls: ["https://cross-source-inventory.example.test/category"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "123" });
+
+    const productIndexes = Array.from({ length: 100 }, (_, index) => index + 1);
+    const feedItems = productIndexes.map((index) =>
+      feedItem(`offer:inventory-${index}`, `inventory-${index}`)
+    );
+    const merchantItems = productIndexes.map((index) =>
+      merchantItem(`offer:inventory-${index}`, `inventory-${index}`, undefined, index <= 2)
+    );
+    const feedSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-inventory-feed"
+    );
+    const merchantSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-inventory-merchant"
+    );
+
+    await persistFeedCheckResult(feedSnapshot.id, created.store.id, feedResult(feedItems));
+    await persistMerchantCenterItemIssuesResult(
+      merchantSnapshot.id,
+      created.store.id,
+      merchantResult(merchantItems)
+    );
+
+    await expect(
+      getCrossSourceProductMatchSummary({
+        feedSnapshotId: feedSnapshot.id,
+        merchantSnapshotId: merchantSnapshot.id
+      })
+    ).resolves.toMatchObject({
+      comparable: true,
+      matchedCount: 100,
+      feedOnlyCount: 0,
+      merchantOnlyCount: 0,
+      ambiguousCount: 0
+    });
+
+    const inspector = new Client({ connectionString: dbUrlWithSchema });
+    await inspector.connect();
+    const persisted = await inspector.query<{ identity_count: string; issue_count: string }>(
+      `
+        SELECT
+          COUNT(*) FILTER (
+            WHERE metadata_json ->> 'merchantDataKind' = 'product_identity'
+          )::text AS identity_count,
+          COUNT(*) FILTER (
+            WHERE jsonb_typeof(merchant_issues_json) = 'array'
+              AND jsonb_array_length(merchant_issues_json) > 0
+          )::text AS issue_count
+        FROM source_items
+        WHERE snapshot_id = $1 AND source = 'merchant_center'
+      `,
+      [merchantSnapshot.id]
+    );
+    await inspector.end();
+    expect(persisted.rows[0]).toEqual({ identity_count: "100", issue_count: "2" });
+
+    const healthyFeedSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-inventory-feed-healthy"
+    );
+    const healthyMerchantSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-inventory-merchant-healthy"
+    );
+    await persistFeedCheckResult(
+      healthyFeedSnapshot.id,
+      created.store.id,
+      feedResult(feedItems)
+    );
+    await persistMerchantCenterItemIssuesResult(
+      healthyMerchantSnapshot.id,
+      created.store.id,
+      merchantResult(
+        productIndexes.map((index) =>
+          merchantItem(`offer:inventory-${index}`, `inventory-${index}`, undefined, false)
+        )
+      )
+    );
+
+    await expect(
+      getCrossSourceProductMatchSummary({
+        feedSnapshotId: healthyFeedSnapshot.id,
+        merchantSnapshotId: healthyMerchantSnapshot.id
+      })
+    ).resolves.toMatchObject({
+      comparable: true,
+      matchedCount: 100,
+      feedOnlyCount: 0,
+      merchantOnlyCount: 0,
+      ambiguousCount: 0
+    });
+
+    const healthyInspector = new Client({ connectionString: dbUrlWithSchema });
+    await healthyInspector.connect();
+    const healthyPersisted = await healthyInspector.query<{ identity_count: string; issue_count: string }>(
+      `
+        SELECT
+          COUNT(*) FILTER (
+            WHERE metadata_json ->> 'merchantDataKind' = 'product_identity'
+          )::text AS identity_count,
+          COUNT(*) FILTER (
+            WHERE jsonb_typeof(merchant_issues_json) = 'array'
+              AND jsonb_array_length(merchant_issues_json) > 0
+          )::text AS issue_count
+        FROM source_items
+        WHERE snapshot_id = $1 AND source = 'merchant_center'
+      `,
+      [healthyMerchantSnapshot.id]
+    );
+    await healthyInspector.end();
+    expect(healthyPersisted.rows[0]).toEqual({ identity_count: "100", issue_count: "0" });
+  });
+
+  it("uses unique offer IDs first and falls back to an unambiguous stable key", async () => {
+    const {
+      connectMerchantCenter,
+      createQueuedSnapshot,
+      createStore,
+      getCrossSourceProductMatchSummary,
+      persistFeedCheckResult,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Cross-source fallback store",
+      domain: "https://cross-source-fallback.example.test",
+      sitemapUrl: "https://cross-source-fallback.example.test/sitemap.xml",
+      feedUrl: "https://cross-source-fallback.example.test/feed.xml",
+      categoryUrls: ["https://cross-source-fallback.example.test/category"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "123" });
+
+    const feedSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-fallback-feed"
+    );
+    const merchantSnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "cross-source-fallback-merchant"
+    );
+    await persistFeedCheckResult(
+      feedSnapshot.id,
+      created.store.id,
+      feedResult([
+        feedItem("offer:fallback-feed-offer", "feed-offer"),
+        feedItem("offer:fallback-merchant-offer", undefined),
+        feedItem("offer:offer-disagreement", "feed-offer-id"),
+        feedItem(" Stable Fallback Duplicate ", undefined),
+        feedItem("stable fallback duplicate", undefined),
+        feedItem("stable merchant duplicate", undefined)
+      ])
+    );
+    await persistMerchantCenterItemIssuesResult(
+      merchantSnapshot.id,
+      created.store.id,
+      merchantResult([
+        merchantItem("offer:fallback-feed-offer", undefined, undefined, false),
+        merchantItem("offer:fallback-merchant-offer", "merchant-offer", undefined, false),
+        merchantItem("offer:offer-disagreement", "merchant-offer-id", undefined, false),
+        merchantItem("stable fallback duplicate", undefined, undefined, false),
+        merchantItem(" Stable Merchant Duplicate ", undefined, undefined, false),
+        merchantItem("stable merchant duplicate", undefined, undefined, false)
+      ])
+    );
+
+    const summary = await getCrossSourceProductMatchSummary({
+      feedSnapshotId: feedSnapshot.id,
+      merchantSnapshotId: merchantSnapshot.id
+    });
+
+    expect(summary).toMatchObject({
+      comparable: true,
+      matchedCount: 2,
+      feedOnlyCount: 1,
+      merchantOnlyCount: 1,
+      ambiguousCount: 2
+    });
+    expect(summary?.samples.matched).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ identityKey: "stable:offer:fallback-feed-offer" }),
+        expect.objectContaining({ identityKey: "stable:offer:fallback-merchant-offer" })
+      ])
+    );
+    expect(summary?.samples.feedOnly).toEqual([
+      expect.objectContaining({ identityKey: "offer:feed-offer-id" })
+    ]);
+    expect(summary?.samples.merchantOnly).toEqual([
+      expect.objectContaining({ identityKey: "offer:merchant-offer-id" })
+    ]);
+    expect(summary?.samples.ambiguous).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ identityKey: "stable:stable fallback duplicate", feedCount: 2 }),
+        expect.objectContaining({ identityKey: "stable:stable merchant duplicate", merchantCount: 2 })
+      ])
+    );
   });
 });

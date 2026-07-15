@@ -100,6 +100,8 @@ function issueResult(
     errorMessage: status === "success" ? undefined : "Merchant Center product pagination was incomplete.",
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantProductIdentityVersion: "v1",
+      merchantProductIdentityComplete: status === "success",
       merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId),
       productsSeen: items.length,
       productsWithIssues: items.length,

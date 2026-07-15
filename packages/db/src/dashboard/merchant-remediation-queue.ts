@@ -131,7 +131,9 @@ export async function listDashboardMerchantRemediationQueue(
          AND incident_context.store_id = source_items.store_id
          AND incident_context.type = 'merchant_item_issues'
         WHERE source_items.source = 'merchant_center'
-          AND source_items.metadata_json ->> 'merchantDataKind' = 'item_issues'
+          AND source_items.metadata_json ->> 'merchantDataKind' IN ('item_issues', 'product_identity')
+          AND jsonb_typeof(source_items.merchant_issues_json) = 'array'
+          AND jsonb_array_length(source_items.merchant_issues_json) > 0
       ),
       item_issues AS (
         SELECT
