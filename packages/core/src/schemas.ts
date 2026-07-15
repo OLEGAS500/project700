@@ -171,6 +171,16 @@ export const merchantCenterConnectionInputSchema = z
   })
   .strict();
 
+export const merchantCenterOAuthTokenResponseSchema = z
+  .object({
+    access_token: z.string().trim().min(1),
+    refresh_token: z.string().trim().min(1).optional(),
+    expires_in: z.number().int().positive(),
+    token_type: z.string().trim().min(1).optional(),
+    scope: z.string().trim().min(1).optional()
+  })
+  .passthrough();
+
 const maintenanceWindowDateSchema = z.string().datetime({ offset: true });
 
 export const createMaintenanceWindowInputSchema = z
@@ -297,6 +307,9 @@ export type UpdateAlertPreferencesInput = z.infer<typeof updateAlertPreferencesI
 export type TelegramDestinationInput = z.infer<typeof telegramDestinationInputSchema>;
 export type EmailDestinationInput = z.infer<typeof emailDestinationInputSchema>;
 export type MerchantCenterConnectionInput = z.infer<typeof merchantCenterConnectionInputSchema>;
+export type MerchantCenterOAuthTokenResponse = z.infer<
+  typeof merchantCenterOAuthTokenResponseSchema
+>;
 export type CreateMaintenanceWindowInput = z.infer<typeof createMaintenanceWindowInputSchema>;
 
 export const defaultStoreThresholds: StoreThresholds = {

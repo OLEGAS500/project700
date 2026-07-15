@@ -3,7 +3,7 @@ import {
   type MerchantCenterConnectionInput
 } from "@eim/core";
 import type pg from "pg";
-import { getPool } from "./client";
+import { getPool, withTransaction } from "./client";
 
 type MerchantCenterConnectionRow = {
   id: string;
@@ -62,8 +62,24 @@ export async function connectMerchantCenter(
 
 export async function disconnectMerchantCenter(
   storeId: string,
-  executor: pg.Pool | pg.PoolClient = getPool()
+  executor?: pg.Pool | pg.PoolClient
 ): Promise<MerchantCenterConnectionRecord> {
+  if (!executor) {
+    return withTransaction((client) => disconnectWithExecutor(storeId, client));
+  }
+
+  return disconnectWithExecutor(storeId, executor);
+}
+
+async function disconnectWithExecutor(
+  storeId: string,
+  executor: pg.Pool | pg.PoolClient
+): Promise<MerchantCenterConnectionRecord> {
+  await executor.query("DELETE FROM merchant_center_oauth_states WHERE store_id = $1", [storeId]);
+  await executor.query("DELETE FROM merchant_center_oauth_credentials WHERE store_id = $1", [
+    storeId
+  ]);
+
   const result = await executor.query<MerchantCenterConnectionRow>(
     `
       UPDATE stores
