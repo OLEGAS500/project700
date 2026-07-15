@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const database = vi.hoisted(() => ({
   cancelMaintenanceWindow: vi.fn(),
   createMaintenanceWindow: vi.fn(),
+  MaintenanceWindowConflictError: class MaintenanceWindowConflictError extends Error {},
   MaintenanceWindowNotFoundError: class MaintenanceWindowNotFoundError extends Error {}
 }));
 
@@ -100,6 +101,21 @@ describe("maintenance window server actions", () => {
     );
 
     expect(result).toEqual({ error: "This maintenance window no longer exists." });
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+    expect(navigation.redirect).not.toHaveBeenCalled();
+  });
+
+  it("maps stale or cancelled windows to a safe conflict message", async () => {
+    database.cancelMaintenanceWindow.mockRejectedValue(
+      new database.MaintenanceWindowConflictError("stale")
+    );
+
+    const result = await cancelMaintenanceWindowAction(
+      storeId,
+      "70000000-0000-4000-8000-000000000004"
+    );
+
+    expect(result).toEqual({ error: "This maintenance window can no longer be cancelled." });
     expect(cache.revalidatePath).not.toHaveBeenCalled();
     expect(navigation.redirect).not.toHaveBeenCalled();
   });

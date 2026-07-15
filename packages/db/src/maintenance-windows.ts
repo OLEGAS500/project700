@@ -11,6 +11,7 @@ type MaintenanceWindowRow = {
   created_by: string;
   created_at: Date;
   cancelled_at: Date | null;
+  has_ended?: boolean;
 };
 
 export type MaintenanceWindowRecord = {
@@ -28,6 +29,13 @@ export class MaintenanceWindowNotFoundError extends Error {
   constructor(windowId: string) {
     super(`Maintenance window ${windowId} was not found`);
     this.name = "MaintenanceWindowNotFoundError";
+  }
+}
+
+export class MaintenanceWindowConflictError extends Error {
+  constructor(windowId: string) {
+    super(`Maintenance window ${windowId} can no longer be cancelled`);
+    this.name = "MaintenanceWindowConflictError";
   }
 }
 
@@ -74,12 +82,35 @@ export async function cancelMaintenanceWindow(
   windowId: string
 ): Promise<MaintenanceWindowRecord> {
   return withTransaction(async (client) => {
+    const currentResult = await client.query<MaintenanceWindowRow>(
+      `
+        SELECT maintenance_windows.*,
+          (ends_at <= clock_timestamp()) AS has_ended
+        FROM maintenance_windows
+        WHERE id = $1
+          AND store_id = $2
+        FOR UPDATE
+      `,
+      [windowId, storeId]
+    );
+    const currentWindow = currentResult.rows[0];
+
+    if (!currentWindow) {
+      throw new MaintenanceWindowNotFoundError(windowId);
+    }
+
+    if (currentWindow.cancelled_at || currentWindow.has_ended) {
+      throw new MaintenanceWindowConflictError(windowId);
+    }
+
     const result = await client.query<MaintenanceWindowRow>(
       `
         UPDATE maintenance_windows
-        SET cancelled_at = COALESCE(cancelled_at, clock_timestamp())
+        SET cancelled_at = clock_timestamp()
         WHERE id = $1
           AND store_id = $2
+          AND cancelled_at IS NULL
+          AND ends_at > clock_timestamp()
         RETURNING *
       `,
       [windowId, storeId]
@@ -87,7 +118,7 @@ export async function cancelMaintenanceWindow(
     const window = result.rows[0];
 
     if (!window) {
-      throw new MaintenanceWindowNotFoundError(windowId);
+      throw new MaintenanceWindowConflictError(windowId);
     }
 
     return mapMaintenanceWindow(window);

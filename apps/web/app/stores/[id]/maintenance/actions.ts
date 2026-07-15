@@ -1,7 +1,12 @@
 "use server";
 
 import { createMaintenanceWindowInputSchema } from "@eim/core";
-import { cancelMaintenanceWindow, createMaintenanceWindow, MaintenanceWindowNotFoundError } from "@eim/db";
+import {
+  cancelMaintenanceWindow,
+  createMaintenanceWindow,
+  MaintenanceWindowConflictError,
+  MaintenanceWindowNotFoundError
+} from "@eim/db";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -39,6 +44,9 @@ export async function cancelMaintenanceWindowAction(
   } catch (error) {
     if (error instanceof MaintenanceWindowNotFoundError) {
       return { error: "This maintenance window no longer exists." };
+    }
+    if (error instanceof MaintenanceWindowConflictError) {
+      return { error: "This maintenance window can no longer be cancelled." };
     }
     return { error: "The maintenance window could not be cancelled." };
   }

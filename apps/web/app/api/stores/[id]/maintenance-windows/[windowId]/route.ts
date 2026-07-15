@@ -1,4 +1,8 @@
-import { cancelMaintenanceWindow, MaintenanceWindowNotFoundError } from "@eim/db";
+import {
+  cancelMaintenanceWindow,
+  MaintenanceWindowConflictError,
+  MaintenanceWindowNotFoundError
+} from "@eim/db";
 import { NextResponse } from "next/server";
 
 type RouteContext = {
@@ -14,6 +18,12 @@ export async function DELETE(_request: Request, context: RouteContext) {
   } catch (error) {
     if (error instanceof MaintenanceWindowNotFoundError) {
       return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    if (error instanceof MaintenanceWindowConflictError) {
+      return NextResponse.json(
+        { error: "This maintenance window can no longer be cancelled." },
+        { status: 409 }
+      );
     }
     throw error;
   }

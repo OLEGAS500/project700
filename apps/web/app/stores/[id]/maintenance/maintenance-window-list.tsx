@@ -2,7 +2,6 @@
 
 import type { MaintenanceWindowRecord } from "@eim/db";
 import { useActionState, useState } from "react";
-import { useFormStatus } from "react-dom";
 import { cancelMaintenanceWindowAction, type MaintenanceActionState } from "./actions";
 
 export default function MaintenanceWindowList({ storeId, windows }: { storeId: string; windows: MaintenanceWindowRecord[] }) {
@@ -47,11 +46,10 @@ function WindowRow({ storeId, now, window }: { storeId: string; now: number; win
 }
 
 function CancelForm({ storeId, windowId }: { storeId: string; windowId: string }) {
-  const [state, action] = useActionState(
+  const [state, action, pending] = useActionState(
     () => cancelMaintenanceWindowAction(storeId, windowId),
     { error: null } satisfies MaintenanceActionState
   );
-  const { pending } = useFormStatus();
 
   return (
     <div className="maintenance-window-action">
