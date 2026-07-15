@@ -142,7 +142,7 @@ function IncidentsLayout({ children }: { children: ReactNode }) {
             EIM
           </Link>
           <h1>Incidents</h1>
-          <p>Prioritized business incidents, with their current evidence and lifecycle status.</p>
+          <p>Operational and business incidents, with their current evidence and lifecycle status.</p>
         </div>
         <Link className="back-link" href="/dashboard">
           Stores overview
@@ -295,7 +295,7 @@ function EmptyIncidentState({ hasFilters }: { hasFilters: boolean }) {
       <p>
         {hasFilters
           ? "Try broadening the filters to review other incident groups."
-          : "Detected incident groups will appear here when monitoring finds a confirmed problem."}
+          : "Detected incident groups will appear here when monitoring identifies a confirmed business issue or a source-health problem."}
       </p>
       {hasFilters ? <Link href="/incidents">Clear filters</Link> : null}
     </section>
