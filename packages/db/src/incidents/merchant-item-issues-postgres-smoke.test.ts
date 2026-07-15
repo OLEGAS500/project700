@@ -377,7 +377,7 @@ describeIfDatabase("merchant item issue incident rule", () => {
       feedUrl: "https://merchant-issue-normalization.example.com/feed.xml",
       categoryUrls: ["https://merchant-issue-normalization.example.com/collections/all"]
     });
-    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "987" });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "123" });
 
     const prefix = "issue_" + "x".repeat(250);
     const firstCode = `${prefix}A`;
