@@ -3788,13 +3788,19 @@ describeIfDatabase("postgres smoke", () => {
       expect(detail?.store).toMatchObject({ id: primary.store.id });
       expect(detail?.timeline).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: alertEventId, reason: "dashboard_test_reason" })
+          expect.objectContaining({
+            id: alertEventId,
+            reason: "dashboard_test_reason",
+            fromStatus: null,
+            toStatus: "open"
+          })
         ])
       );
       expect(detail?.signals).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             type: "product_count",
+            metric: "product_count",
             source: "feed",
             evidence: { sampleCount: 25 }
           })
