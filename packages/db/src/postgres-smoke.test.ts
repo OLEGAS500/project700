@@ -2122,7 +2122,9 @@ describeIfDatabase("postgres smoke", () => {
 
     const muted = await updateAlertPreferences(created.store.id, {
       telegramEnabled: true,
-      mutedIncidentTypes: ["source_health"]
+      mutedIncidentTypes: ["source_health"],
+      worseningAffectedCountPercent: 0.33333,
+      worseningSeverityIncrease: false
     });
     const replayedOpened = await createIncidentOpenedAlertDelivery(alertClient, {
       incidentId,
@@ -2151,7 +2153,12 @@ describeIfDatabase("postgres smoke", () => {
 
     expect(muted).toMatchObject({
       alertPreferenceVersion: 2,
-      preferences: { telegramEnabled: true, mutedIncidentTypes: ["source_health"] }
+      preferences: {
+        telegramEnabled: true,
+        mutedIncidentTypes: ["source_health"],
+        worseningAffectedCountPercent: 0.33333,
+        worseningSeverityIncrease: false
+      }
     });
     expect(replayedOpened).toEqual(
       expect.arrayContaining([
