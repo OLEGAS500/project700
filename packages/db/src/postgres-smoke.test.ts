@@ -51,7 +51,8 @@ import {
 import {
   cancelMaintenanceWindow,
   createMaintenanceWindow,
-  getActiveMaintenanceWindow
+  getActiveMaintenanceWindow,
+  MaintenanceWindowConflictError
 } from "./maintenance-windows";
 import { createStore, DuplicateStoreDomainError } from "./stores";
 import {
@@ -1874,6 +1875,82 @@ describeIfDatabase("postgres smoke", () => {
       { event_type: "source_health_recovery_healthy", count: "1" }
     ]);
     expect(incident.rows[0].status).toBe("recovering");
+  });
+
+  it("enforces the maintenance cancellation lifecycle in PostgreSQL", async () => {
+    const created = await createStore({
+      name: "Maintenance Lifecycle Store",
+      domain: "https://maintenance-lifecycle.example.com",
+      sitemapUrl: "https://maintenance-lifecycle.example.com/sitemap.xml",
+      feedUrl: "https://maintenance-lifecycle.example.com/feed.xml",
+      categoryUrls: ["https://maintenance-lifecycle.example.com/collections/all"]
+    });
+    const activeRange = {
+      startsAt: new Date(Date.now() - 60_000).toISOString(),
+      endsAt: new Date(Date.now() + 60_000).toISOString()
+    };
+    const upcomingRange = {
+      startsAt: new Date(Date.now() + 120_000).toISOString(),
+      endsAt: new Date(Date.now() + 180_000).toISOString()
+    };
+    const completedRange = {
+      startsAt: new Date(Date.now() - 180_000).toISOString(),
+      endsAt: new Date(Date.now() - 120_000).toISOString()
+    };
+
+    const active = await createMaintenanceWindow(created.store.id, {
+      ...activeRange,
+      reason: "Active lifecycle window",
+      createdBy: "smoke"
+    });
+    const upcoming = await createMaintenanceWindow(created.store.id, {
+      ...upcomingRange,
+      reason: "Upcoming lifecycle window",
+      createdBy: "smoke"
+    });
+    const completed = await createMaintenanceWindow(created.store.id, {
+      ...completedRange,
+      reason: "Completed lifecycle window",
+      createdBy: "smoke"
+    });
+    const cancelled = await createMaintenanceWindow(created.store.id, {
+      ...activeRange,
+      reason: "Cancelled lifecycle window",
+      createdBy: "smoke"
+    });
+
+    await expect(cancelMaintenanceWindow(created.store.id, active.id)).resolves.toMatchObject({
+      id: active.id
+    });
+    await expect(cancelMaintenanceWindow(created.store.id, upcoming.id)).resolves.toMatchObject({
+      id: upcoming.id
+    });
+    await cancelMaintenanceWindow(created.store.id, cancelled.id);
+
+    await expect(cancelMaintenanceWindow(created.store.id, completed.id)).rejects.toBeInstanceOf(
+      MaintenanceWindowConflictError
+    );
+    await expect(cancelMaintenanceWindow(created.store.id, cancelled.id)).rejects.toBeInstanceOf(
+      MaintenanceWindowConflictError
+    );
+
+    const checkClient = new Client({ connectionString: dbUrlWithSchema });
+    await checkClient.connect();
+    const rows = await checkClient.query<{ id: string; cancelled_at: Date | null }>(
+      `
+        SELECT id, cancelled_at
+        FROM maintenance_windows
+        WHERE id = ANY($1::uuid[])
+      `,
+      [[active.id, upcoming.id, completed.id, cancelled.id]]
+    );
+    await checkClient.end();
+
+    const cancelledAtById = new Map(rows.rows.map((row) => [row.id, row.cancelled_at]));
+    expect(cancelledAtById.get(active.id)).not.toBeNull();
+    expect(cancelledAtById.get(upcoming.id)).not.toBeNull();
+    expect(cancelledAtById.get(completed.id)).toBeNull();
+    expect(cancelledAtById.get(cancelled.id)).not.toBeNull();
   });
 
   it("versions threshold settings and freezes them on the first evaluation of each snapshot", async () => {
