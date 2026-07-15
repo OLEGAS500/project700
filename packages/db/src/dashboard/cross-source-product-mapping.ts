@@ -128,8 +128,8 @@ export async function getCrossSourceProductMatchSummary(
           WHERE source_checks.snapshot_id = snapshots.id
             AND source_checks.store_id = snapshots.store_id
             AND source_checks.source = 'merchant_center'
-            AND source_checks.check_key = $3
-            AND source_checks.metadata_json ->> 'merchantItemIssuesVersion' = $4
+            AND source_checks.check_key = $2
+            AND source_checks.metadata_json ->> 'merchantItemIssuesVersion' = $3
           ORDER BY finished_at DESC, created_at DESC, id DESC
           LIMIT 1
         ) AS merchant_check ON true
