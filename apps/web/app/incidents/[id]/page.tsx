@@ -35,7 +35,7 @@ const merchantRemediationQuerySchema = z.object({
   priority: z.enum(["critical", "high", "normal"]).optional(),
   search: z.string().trim().min(1).max(200).optional(),
   sort: z.enum(["priority", "issue_count", "stable_key", "title"]).default("priority"),
-  cursor: z.string().max(2048).optional()
+  cursor: z.string().max(4096).optional()
 });
 
 type MerchantRemediationQuery = {

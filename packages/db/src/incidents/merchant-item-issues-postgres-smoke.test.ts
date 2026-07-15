@@ -63,6 +63,23 @@ function issueItemWithCodes(stableKey: string, codes: string[]): SourceItemInput
   };
 }
 
+function issueItemWithAttributes(stableKey: string, code: string, attributes: string[]): SourceItemInput {
+  const item = issueItem(stableKey, code);
+  return {
+    ...item,
+    merchantIssues: attributes.map((attribute) => ({
+      code,
+      severity: "error",
+      resolution: "merchant_action",
+      attribute,
+      reportingContext: "shopping_ads",
+      description: "Invalid product data",
+      applicableCountries: ["US"]
+    })),
+    rawHash: `${stableKey}:${code}:${attributes.join(",")}`
+  };
+}
+
 function issueResult(
   items: SourceItemInput[],
   status: SourceCheckResult["status"] = "success",
@@ -357,6 +374,113 @@ describeIfDatabase("merchant item issue incident rule", () => {
     expect(counts.rows).toHaveLength(2);
     expect(counts.rows.every((row) => row.count === "1")).toBe(true);
     expect(new Set(counts.rows.map((row) => row.store_id)).size).toBe(2);
+  });
+
+  it("round-trips the maximum combined Unicode cursor through the next page", async () => {
+    const {
+      connectMerchantCenter,
+      createOrUpdateMerchantItemIssuesIncident,
+      createQueuedSnapshot,
+      createStore,
+      listDashboardMerchantRemediationQueue,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Merchant Issue Unicode Cursor Store",
+      domain: "https://merchant-issue-unicode-cursor.example.com",
+      sitemapUrl: "https://merchant-issue-unicode-cursor.example.com/sitemap.xml",
+      feedUrl: "https://merchant-issue-unicode-cursor.example.com/feed.xml",
+      categoryUrls: ["https://merchant-issue-unicode-cursor.example.com/collections/all"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "123" });
+
+    const longStableKey = `offer:${"a".repeat(5)}${"😀".repeat(250)}`;
+    const longTitle = "😀".repeat(256);
+    const items = [
+      issueItem(longStableKey, "unicode_cursor_issue", "error", longTitle),
+      issueItem("offer:short", "unicode_cursor_issue")
+    ];
+    const first = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-unicode-cursor-1");
+    await persistMerchantCenterItemIssuesResult(first.id, created.store.id, issueResult(items));
+    await expect(createOrUpdateMerchantItemIssuesIncident(created.store.id, first.id)).resolves.toBeNull();
+
+    const second = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-unicode-cursor-2");
+    await persistMerchantCenterItemIssuesResult(second.id, created.store.id, issueResult(items));
+    const incidentId = await createOrUpdateMerchantItemIssuesIncident(created.store.id, second.id);
+    expect(incidentId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const firstPage = await listDashboardMerchantRemediationQueue({ incidentId: incidentId!, limit: 1 });
+    expect(firstPage.items).toEqual([
+      expect.objectContaining({ stableKey: [...longStableKey].slice(0, 256).join("") })
+    ]);
+    expect(firstPage.nextCursor).toBeTruthy();
+    expect(firstPage.nextCursor!.length).toBeGreaterThan(2048);
+    expect(firstPage.nextCursor!.length).toBeLessThanOrEqual(4096);
+
+    await expect(
+      listDashboardMerchantRemediationQueue({
+        incidentId: incidentId!,
+        cursor: firstPage.nextCursor,
+        limit: 1
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ stableKey: "offer:short" })],
+      nextCursor: null
+    });
+  });
+
+  it("keeps triage and queue counts aligned at a Unicode attribute boundary", async () => {
+    const {
+      connectMerchantCenter,
+      createOrUpdateMerchantItemIssuesIncident,
+      createQueuedSnapshot,
+      createStore,
+      getDashboardIncidentDetail,
+      listDashboardMerchantRemediationQueue,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Merchant Issue Unicode Attribute Store",
+      domain: "https://merchant-issue-unicode-attribute.example.com",
+      sitemapUrl: "https://merchant-issue-unicode-attribute.example.com/sitemap.xml",
+      feedUrl: "https://merchant-issue-unicode-attribute.example.com/feed.xml",
+      categoryUrls: ["https://merchant-issue-unicode-attribute.example.com/collections/all"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "123" });
+
+    const attributePrefix = `${"a".repeat(254)}😀`;
+    const firstAttribute = `${attributePrefix}X`;
+    const secondAttribute = `${attributePrefix}Y`;
+    const first = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-unicode-attribute-1");
+    await persistMerchantCenterItemIssuesResult(
+      first.id,
+      created.store.id,
+      issueResult([issueItemWithAttributes("offer:unicode-attribute", "attribute_boundary", [firstAttribute])])
+    );
+    await expect(createOrUpdateMerchantItemIssuesIncident(created.store.id, first.id)).resolves.toBeNull();
+
+    const second = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-unicode-attribute-2");
+    await persistMerchantCenterItemIssuesResult(
+      second.id,
+      created.store.id,
+      issueResult([
+        issueItemWithAttributes("offer:unicode-attribute", "attribute_boundary", [firstAttribute, secondAttribute])
+      ])
+    );
+    const incidentId = await createOrUpdateMerchantItemIssuesIncident(created.store.id, second.id);
+    expect(incidentId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const detail = await getDashboardIncidentDetail(incidentId!);
+    expect(detail?.merchantIssueSummary).toMatchObject({
+      totalIssues: 2,
+      issueGroups: [expect.objectContaining({ code: "attribute_boundary", issueCount: 2 })],
+      prioritizedProducts: [expect.objectContaining({ issueCount: 2 })]
+    });
+    await expect(listDashboardMerchantRemediationQueue({ incidentId: incidentId! })).resolves.toMatchObject({
+      items: [expect.objectContaining({ issueCount: 2 })]
+    });
   });
 
   it("uses the same bounded issue normalization for groups, filters, and counts", async () => {

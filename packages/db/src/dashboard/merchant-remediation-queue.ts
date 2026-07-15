@@ -70,7 +70,7 @@ const defaultQueueLimit = 25;
 const maximumQueueLimit = 50;
 const maximumQueueSortKeyLength = 256;
 const maximumIssuesForQueueRow = 100;
-const maximumCursorLength = 2048;
+const maximumCursorLength = 4096;
 const cursorVersion = 2 as const;
 
 export async function listDashboardMerchantRemediationQueue(
@@ -266,7 +266,9 @@ export async function listDashboardMerchantRemediationQueue(
 export function encodeDashboardMerchantRemediationCursor(
   cursor: DashboardMerchantRemediationQueueCursor
 ): string {
-  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+  const encoded = Buffer.from(JSON.stringify(cursor)).toString("base64url");
+  if (encoded.length > maximumCursorLength) throw new InvalidDashboardMerchantRemediationCursorError();
+  return encoded;
 }
 
 export function decodeDashboardMerchantRemediationCursor(value: string): DashboardMerchantRemediationQueueCursor {
@@ -324,7 +326,7 @@ function mapQueueItem(row: QueueRow): DashboardMerchantRemediationQueueItem[] {
   if (!product) return [];
   return [
     {
-      stableKey: product.stableKey ?? row.stable_key.slice(0, maximumQueueSortKeyLength),
+      stableKey: product.stableKey ?? [...row.stable_key].slice(0, maximumQueueSortKeyLength).join(""),
       offerId: product.offerId,
       title: product.title,
       priority: product.priority,
@@ -399,7 +401,7 @@ function escapeLikePattern(value: string): string {
 
 function normalizeQueueFilter(value: string | null | undefined, maximumLength: number): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.trim().slice(0, maximumLength);
+  const normalized = [...value.trim()].slice(0, maximumLength).join("");
   return normalized || null;
 }
 
