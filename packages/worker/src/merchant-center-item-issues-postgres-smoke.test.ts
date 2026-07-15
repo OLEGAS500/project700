@@ -1,4 +1,5 @@
 import type { SourceCheckResult, SourceItemInput } from "@eim/core";
+import { merchantItemIssuesConfigurationHash } from "@eim/db";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -68,6 +69,7 @@ function result(
     items,
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash("123"),
       productsSeen: items.length,
       productsWithIssues: items.length,
       issuesObserved: items.length,

@@ -11,6 +11,7 @@ import {
 import { upsertIncidentSignal } from "./signals";
 
 const merchantItemIssuesVersion = "v1";
+const merchantItemIssuesCheckKey = "merchant_center:item_issues";
 const merchantItemIssuesRuleVersion = "merchant_item_issues_v1";
 const maximumSamples = 20;
 const maximumIssueTextLength = 256;
@@ -346,12 +347,14 @@ async function readMerchantItemIssuesObservation(
         ON source_checks.snapshot_id = snapshots.id
        AND source_checks.store_id = snapshots.store_id
        AND source_checks.source = 'merchant_center'
-       AND source_checks.metadata_json ->> 'merchantItemIssuesVersion' = $3
+       AND source_checks.check_key = $3
+       AND source_checks.metadata_json ->> 'merchantItemIssuesVersion' = $4
       WHERE snapshots.id = $2 AND snapshots.store_id = $1
-      LIMIT 1${lockClause}
+      ${lockClause}
     `,
-    [storeId, snapshotId, merchantItemIssuesVersion]
+    [storeId, snapshotId, merchantItemIssuesCheckKey, merchantItemIssuesVersion]
   );
+  if (checkResult.rows.length !== 1) return null;
   const check = checkResult.rows[0];
 
   if (!check) return null;

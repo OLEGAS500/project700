@@ -23,6 +23,10 @@ type SnapshotRow = {
   created_at: Date;
 };
 
+const merchantItemIssuesCheckKey = "merchant_center:item_issues";
+const merchantItemIssuesVersion = "v1";
+const merchantItemIssuesConfigurationHashKey = "merchantItemIssuesConfigurationHash";
+
 export type SnapshotRecord = {
   id: string;
   storeId: string;
@@ -152,6 +156,54 @@ export async function persistMerchantCenterItemIssuesResult(
   result: SourceCheckResult
 ): Promise<SnapshotRecord> {
   return withTransaction(async (client) => {
+    const snapshot = await lockMerchantItemIssuesSnapshot(client, snapshotId, storeId);
+    if (!snapshot) {
+      throw new Error(`Snapshot ${snapshotId} was not found for store ${storeId}`);
+    }
+
+    const incomingConfigurationHash = readMerchantItemIssuesConfigurationHash(result.metadata);
+    if (!incomingConfigurationHash) {
+      return snapshot;
+    }
+
+    const existingChecks = await client.query<{
+      check_key: string;
+      configuration_hash: string | null;
+    }>(
+      `
+        SELECT
+          check_key,
+          metadata_json ->> $3 AS configuration_hash
+        FROM source_checks
+        WHERE snapshot_id = $1
+          AND store_id = $2
+          AND source = 'merchant_center'
+          AND metadata_json ->> 'merchantItemIssuesVersion' = $4
+        FOR UPDATE
+      `,
+      [snapshotId, storeId, merchantItemIssuesConfigurationHashKey, merchantItemIssuesVersion]
+    );
+
+    if (
+      existingChecks.rows.some(
+        (row) => row.configuration_hash !== incomingConfigurationHash
+      )
+    ) {
+      return snapshot;
+    }
+
+    await client.query(
+      `
+        DELETE FROM source_checks
+        WHERE snapshot_id = $1
+          AND store_id = $2
+          AND source = 'merchant_center'
+          AND metadata_json ->> 'merchantItemIssuesVersion' = $3
+          AND check_key <> $4
+      `,
+      [snapshotId, storeId, merchantItemIssuesVersion, merchantItemIssuesCheckKey]
+    );
+
     if (result.status === "success") {
       await client.query(
         `
@@ -165,15 +217,48 @@ export async function persistMerchantCenterItemIssuesResult(
       );
     }
 
-    return persistSourceCheckResultWithClient(client, snapshotId, storeId, result);
+    return persistSourceCheckResultWithClient(
+      client,
+      snapshotId,
+      storeId,
+      result,
+      merchantItemIssuesCheckKey
+    );
   });
+}
+
+async function lockMerchantItemIssuesSnapshot(
+  client: pg.PoolClient,
+  snapshotId: string,
+  storeId: string
+): Promise<SnapshotRecord | null> {
+  const result = await client.query<SnapshotRow>(
+    `
+      SELECT snapshots.*
+      FROM snapshots
+      JOIN stores ON stores.id = snapshots.store_id
+      WHERE snapshots.id = $1 AND snapshots.store_id = $2
+      FOR UPDATE OF snapshots, stores
+    `,
+    [snapshotId, storeId]
+  );
+
+  return result.rows[0] ? mapSnapshot(result.rows[0]) : null;
+}
+
+function readMerchantItemIssuesConfigurationHash(
+  metadata: Record<string, unknown> | undefined
+): string | null {
+  const value = metadata?.[merchantItemIssuesConfigurationHashKey];
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
 }
 
 async function persistSourceCheckResultWithClient(
   client: pg.PoolClient,
   snapshotId: string,
   storeId: string,
-  result: SourceCheckResult
+  result: SourceCheckResult,
+  checkKey = result.url ?? result.source
 ): Promise<SnapshotRecord> {
     await client.query(
       `
@@ -235,7 +320,7 @@ async function persistSourceCheckResultWithClient(
         snapshotId,
         storeId,
         result.source,
-        result.url ?? result.source,
+        checkKey,
         result.url ?? null,
         result.status,
         result.startedAt,

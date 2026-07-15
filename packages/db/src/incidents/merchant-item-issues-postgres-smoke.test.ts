@@ -48,7 +48,7 @@ function issueResult(
 ): SourceCheckResult {
   return {
     source: "merchant_center",
-    url: "https://merchantapi.googleapis.com/products/v1/accounts/123/products",
+    url: `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/products`,
     status,
     startedAt: "2026-07-15T12:00:00.000Z",
     finishedAt: "2026-07-15T12:00:01.000Z",
@@ -295,30 +295,64 @@ describeIfDatabase("merchant item issue incident rule", () => {
     );
 
     await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "222" });
+    await persistMerchantCenterItemIssuesResult(
+      accountASnapshot.id,
+      created.store.id,
+      issueResult([issueItem("offer:account-b", "missing_brand")], "success", "222")
+    );
+    await persistMerchantCenterItemIssuesResult(
+      accountASnapshot.id,
+      created.store.id,
+      issueResult([issueItem("offer:account-a", "invalid_gtin")], "success", "111")
+    );
     await expect(
       createOrUpdateMerchantItemIssuesIncident(created.store.id, accountASnapshot.id)
     ).resolves.toBeNull();
 
     const afterReconnect = new Client({ connectionString: dbUrlWithSchema });
     await afterReconnect.connect();
-    const rejectedState = await afterReconnect.query<{ candidates: string; incidents: string }>(
+    const rejectedState = await afterReconnect.query<{
+      check_key: string;
+      configuration_hash: string;
+      candidates: string;
+      incidents: string;
+    }>(
       `
         SELECT
           (
+            SELECT check_key
+            FROM source_checks
+            WHERE snapshot_id = $1
+              AND source = 'merchant_center'
+              AND metadata_json ->> 'merchantItemIssuesVersion' = 'v1'
+          ) AS check_key,
+          (
+            SELECT metadata_json ->> 'merchantItemIssuesConfigurationHash'
+            FROM source_checks
+            WHERE snapshot_id = $1
+              AND source = 'merchant_center'
+              AND metadata_json ->> 'merchantItemIssuesVersion' = 'v1'
+          ) AS configuration_hash,
+          (
             SELECT COUNT(*)
             FROM incident_debounce_candidates
-            WHERE store_id = $1 AND type = 'merchant_item_issues' AND status = 'pending'
+            WHERE store_id = $2 AND type = 'merchant_item_issues' AND status = 'pending'
           ) AS candidates,
           (
             SELECT COUNT(*)
             FROM incidents
-            WHERE store_id = $1 AND type = 'merchant_item_issues'
+            WHERE store_id = $2 AND type = 'merchant_item_issues'
           ) AS incidents
       `,
-      [created.store.id]
+      [accountASnapshot.id, created.store.id]
     );
     await afterReconnect.end();
-    expect(rejectedState.rows[0]).toEqual({ candidates: "0", incidents: "0" });
+    expect(rejectedState.rows[0]).toEqual({
+      check_key: "merchant_center:item_issues",
+      configuration_hash: merchantItemIssuesConfigurationHash("111"),
+      candidates: "0",
+      incidents: "0"
+    });
 
     const accountBFirst = await createQueuedSnapshot(
       created.store.id,
