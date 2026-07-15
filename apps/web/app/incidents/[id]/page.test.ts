@@ -58,6 +58,51 @@ describe("incident detail page", () => {
     expect(html).not.toContain("javascript:alert");
     expect(html).not.toContain("products disappeared");
   });
+
+  it("renders grouped Merchant issue triage without provider payload fields", async () => {
+    const detail = createSourceHealthDetail();
+    detail.incident = {
+      ...detail.incident,
+      type: "merchant_item_issues",
+      title: "Merchant Center item issues",
+      summary: "Products require Merchant Center remediation."
+    };
+    detail.merchantIssueSummary = {
+      totalProducts: 2,
+      totalIssues: 3,
+      truncated: false,
+      issueGroups: [
+        {
+          code: "invalid_gtin",
+          issueCount: 2,
+          productCount: 1,
+          priority: "critical",
+          severities: ["error"],
+          attributes: ["gtin"]
+        }
+      ],
+      prioritizedProducts: [
+        {
+          stableKey: "offer:critical",
+          offerId: "critical",
+          title: "Critical product",
+          priority: "critical",
+          issueCount: 2,
+          issueCodes: ["invalid_gtin"],
+          affectedAttributes: ["gtin"]
+        }
+      ]
+    };
+    database.getDashboardIncidentDetail.mockResolvedValue(detail);
+
+    const html = await renderPage(incidentId);
+
+    expect(html).toContain("Remediation triage");
+    expect(html).toContain("Invalid Gtin");
+    expect(html).toContain("Critical product");
+    expect(html).not.toContain("provider description");
+    expect(html).not.toContain("documentationUrl");
+  });
 });
 
 async function renderPage(id: string): Promise<string> {

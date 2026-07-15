@@ -5,13 +5,27 @@ import {
   type DashboardIncidentListItem,
   type DashboardIncidentListRow
 } from "./incidents";
+import {
+  buildMerchantIssueSummary,
+  type DashboardMerchantIssueSummary,
+  type MerchantIssueTriageSourceRow
+} from "./merchant-issue-triage";
 
 const maximumSamples = 20;
 const maximumTimelineEvents = 100;
 const maximumComments = 100;
+const maximumMerchantIssueProducts = 501;
 
 type DashboardIncidentDetailRow = DashboardIncidentListRow & {
   store_domain: string;
+  opened_snapshot_id: string | null;
+};
+
+type DashboardMerchantIssueProductRow = {
+  stable_key: string | null;
+  offer_id: string | null;
+  title: string | null;
+  merchant_issues_json: unknown;
 };
 
 type DashboardTimelineRow = {
@@ -97,6 +111,7 @@ export type DashboardIncidentDetail = {
     lastErrorCode: string | null;
     sentAt: string | null;
   }>;
+  merchantIssueSummary?: DashboardMerchantIssueSummary;
 };
 
 export async function getDashboardIncidentDetail(
@@ -108,6 +123,7 @@ export async function getDashboardIncidentDetail(
       SELECT
         incidents.id,
         incidents.store_id,
+        incidents.opened_snapshot_id,
         stores.name AS store_name,
         stores.domain AS store_domain,
         incidents.type,
@@ -133,7 +149,7 @@ export async function getDashboardIncidentDetail(
   const incident = incidentResult.rows[0];
   if (!incident) return null;
 
-  const [timelineResult, signalResult, commentResult, deliveryResult] = await Promise.all([
+  const [timelineResult, signalResult, commentResult, deliveryResult, merchantIssueResult] = await Promise.all([
     pool.query<DashboardTimelineRow>(
       `
         SELECT id, event_type, from_status, to_status, message, metadata_json, created_at
@@ -181,8 +197,35 @@ export async function getDashboardIncidentDetail(
         ORDER BY created_at ASC, id ASC
       `,
       [incidentId]
+    ),
+    pool.query<DashboardMerchantIssueProductRow>(
+      `
+        SELECT stable_key, offer_id, title, merchant_issues_json
+        FROM source_items
+        WHERE snapshot_id = $1
+          AND store_id = $2
+          AND source = 'merchant_center'
+          AND metadata_json ->> 'merchantDataKind' = 'item_issues'
+          AND $3::incident_type = 'merchant_item_issues'
+        ORDER BY stable_key ASC
+        LIMIT $4
+      `,
+      [incident.opened_snapshot_id, incident.store_id, incident.type, maximumMerchantIssueProducts]
     )
   ]);
+
+  const merchantIssueSummary =
+    incident.type === "merchant_item_issues"
+      ? buildMerchantIssueSummary(
+          merchantIssueResult.rows.map<MerchantIssueTriageSourceRow>((row) => ({
+            stableKey: row.stable_key,
+            offerId: row.offer_id,
+            title: row.title,
+            issues: row.merchant_issues_json
+          })),
+          merchantIssueResult.rows.length >= maximumMerchantIssueProducts
+        )
+      : undefined;
 
   return {
     incident: mapDashboardIncidentListItem(incident),
@@ -228,7 +271,8 @@ export async function getDashboardIncidentDetail(
       attemptCount: row.attempt_count,
       lastErrorCode: safeDeliveryErrorCode(row.last_error),
       sentAt: row.sent_at?.toISOString() ?? null
-    }))
+    })),
+    merchantIssueSummary
   };
 }
 
