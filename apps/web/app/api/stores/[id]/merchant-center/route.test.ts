@@ -4,7 +4,7 @@ const database = vi.hoisted(() => ({
   connectMerchantCenter: vi.fn(),
   disconnectMerchantCenter: vi.fn(),
   getMerchantCenterConnection: vi.fn(),
-  getStore: vi.fn()
+  MerchantCenterStoreNotFoundError: class MerchantCenterStoreNotFoundError extends Error {}
 }));
 
 vi.mock("@eim/db", () => database);
@@ -19,11 +19,9 @@ describe("Merchant Center connection API", () => {
     database.connectMerchantCenter.mockReset();
     database.disconnectMerchantCenter.mockReset();
     database.getMerchantCenterConnection.mockReset();
-    database.getStore.mockReset();
   });
 
   it("reads a connection without exposing credentials", async () => {
-    database.getStore.mockResolvedValue({ id: storeId });
     database.getMerchantCenterConnection.mockResolvedValue({
       storeId,
       merchantCenterAccountId: "123456789",
@@ -42,6 +40,15 @@ describe("Merchant Center connection API", () => {
     });
   });
 
+  it("returns 404 when the connection read finds no store", async () => {
+    database.getMerchantCenterConnection.mockResolvedValue(null);
+
+    const response = await GET(new Request("http://localhost"), context);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Store not found" });
+  });
+
   it("validates before the database and stores a normalized account ID", async () => {
     const invalidResponse = await PUT(
       new Request("http://localhost", {
@@ -52,10 +59,8 @@ describe("Merchant Center connection API", () => {
     );
 
     expect(invalidResponse.status).toBe(400);
-    expect(database.getStore).not.toHaveBeenCalled();
     expect(database.connectMerchantCenter).not.toHaveBeenCalled();
 
-    database.getStore.mockResolvedValue({ id: storeId });
     database.connectMerchantCenter.mockResolvedValue({
       storeId,
       merchantCenterAccountId: "123456789",
@@ -76,8 +81,26 @@ describe("Merchant Center connection API", () => {
     });
   });
 
+  it("maps a connection write race to a safe 404", async () => {
+    database.connectMerchantCenter.mockRejectedValue(
+      new database.MerchantCenterStoreNotFoundError("internal store details")
+    );
+
+    const response = await PUT(
+      new Request("http://localhost", {
+        method: "PUT",
+        body: JSON.stringify({ merchantCenterAccountId: "123456789" })
+      }),
+      context
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body).toEqual({ error: "Store not found" });
+    expect(JSON.stringify(body)).not.toContain("internal store details");
+  });
+
   it("disconnects an existing store connection", async () => {
-    database.getStore.mockResolvedValue({ id: storeId });
     database.disconnectMerchantCenter.mockResolvedValue({
       storeId,
       merchantCenterAccountId: null,
@@ -93,12 +116,23 @@ describe("Merchant Center connection API", () => {
     });
   });
 
+  it("maps a disconnect write race to a safe 404", async () => {
+    database.disconnectMerchantCenter.mockRejectedValue(
+      new database.MerchantCenterStoreNotFoundError("internal store details")
+    );
+
+    const response = await DELETE(new Request("http://localhost", { method: "DELETE" }), context);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Store not found" });
+  });
+
   it("maps unknown stores and database failures safely", async () => {
-    database.getStore.mockResolvedValue(null);
+    database.getMerchantCenterConnection.mockResolvedValue(null);
     const notFound = await GET(new Request("http://localhost"), context);
     expect(notFound.status).toBe(404);
 
-    database.getStore.mockRejectedValue(new Error("postgres://secret/internal"));
+    database.getMerchantCenterConnection.mockRejectedValue(new Error("postgres://secret/internal"));
     const failure = await GET(new Request("http://localhost"), context);
     expect(failure.status).toBe(503);
     const body = await failure.json();

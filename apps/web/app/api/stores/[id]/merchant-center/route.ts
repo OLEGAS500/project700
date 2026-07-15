@@ -3,7 +3,6 @@ import {
   connectMerchantCenter,
   disconnectMerchantCenter,
   getMerchantCenterConnection,
-  getStore,
   MerchantCenterStoreNotFoundError
 } from "@eim/db";
 import { NextResponse } from "next/server";
@@ -14,11 +13,12 @@ export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
 
   try {
-    if (!(await getStore(id))) {
+    const connection = await getMerchantCenterConnection(id);
+    if (!connection) {
       return NextResponse.json({ error: "Store not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ connection: await getMerchantCenterConnection(id) });
+    return NextResponse.json({ connection });
   } catch {
     return unavailableResponse();
   }
@@ -38,10 +38,6 @@ export async function PUT(request: Request, context: RouteContext) {
   }
 
   try {
-    if (!(await getStore(id))) {
-      return NextResponse.json({ error: "Store not found" }, { status: 404 });
-    }
-
     return NextResponse.json({ connection: await connectMerchantCenter(id, parsed.data) });
   } catch (error) {
     if (error instanceof MerchantCenterStoreNotFoundError) {
@@ -55,10 +51,6 @@ export async function DELETE(_request: Request, context: RouteContext) {
   const { id } = await context.params;
 
   try {
-    if (!(await getStore(id))) {
-      return NextResponse.json({ error: "Store not found" }, { status: 404 });
-    }
-
     return NextResponse.json({ connection: await disconnectMerchantCenter(id) });
   } catch (error) {
     if (error instanceof MerchantCenterStoreNotFoundError) {
