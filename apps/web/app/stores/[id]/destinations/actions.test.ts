@@ -45,6 +45,22 @@ describe("destination server actions", () => {
     expect(database.upsertEmailDestination).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized email input before splitting untrusted text", async () => {
+    const result = await upsertEmailDestinationAction(
+      storeId,
+      initialState,
+      formData({
+        recipientEmails: "\n".repeat(10_000),
+        emailEnabled: "on"
+      })
+    );
+
+    expect(result).toEqual({ error: "Enter at least one valid, unique email address." });
+    expect(database.upsertEmailDestination).not.toHaveBeenCalled();
+    expect(cache.revalidatePath).not.toHaveBeenCalled();
+    expect(navigation.redirect).not.toHaveBeenCalled();
+  });
+
   it("normalizes and saves email recipients, then revalidates and redirects", async () => {
     database.upsertEmailDestination.mockResolvedValue({});
 

@@ -7,13 +7,20 @@ import { upsertEmailDestination, upsertTelegramDestination } from "@eim/db";
 
 export type DestinationActionState = { error: string | null };
 
+const MAX_RECIPIENT_TEXT_LENGTH = 20 * 320 + 19 * 2;
+
 export async function upsertEmailDestinationAction(
   storeId: string,
   _previousState: DestinationActionState,
   formData: FormData
 ): Promise<DestinationActionState> {
+  const recipientText = formValue(formData, "recipientEmails");
+  if (recipientText.length > MAX_RECIPIENT_TEXT_LENGTH) {
+    return { error: "Enter at least one valid, unique email address." };
+  }
+
   const parsed = emailDestinationInputSchema.safeParse({
-    recipientEmails: formValue(formData, "recipientEmails")
+    recipientEmails: recipientText
       .split(/\r?\n/)
       .map((email) => email.trim())
       .filter(Boolean),
