@@ -888,6 +888,72 @@ textarea:disabled {
   border-bottom: 1px solid var(--border);
 }
 
+.incident-actions {
+  padding: 30px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.incident-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.incident-action-form {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.incident-action-form h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.incident-action-form label {
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.incident-action-form label em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.incident-action-form input,
+.incident-action-form textarea {
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.incident-action-form input {
+  height: 38px;
+}
+
+.incident-action-form textarea {
+  min-height: 88px;
+}
+
+.incident-action-form button {
+  min-height: 40px;
+  height: auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.incident-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .detail-section-heading {
   display: flex;
   justify-content: space-between;
@@ -1322,8 +1388,10 @@ textarea:disabled {
   }
 
   .detail-heading-row,
-  .detail-section-heading {
+  .detail-section-heading,
+  .incident-actions-grid {
     display: grid;
+    grid-template-columns: 1fr;
     gap: 12px;
   }
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
+import IncidentActions from "./incident-actions";
 import {
   formatIdentifier,
   incidentContext,
@@ -98,6 +99,7 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
         <DetailFact label="Last updated" value={formatTimestamp(incident.updatedAt)} />
       </dl>
 
+      <IncidentActions incidentId={incident.id} status={incident.status} />
       <SignalSection signals={detail.signals} />
       <SampleSection samples={detail.samples} />
       <TimelineSection timeline={detail.timeline} />
