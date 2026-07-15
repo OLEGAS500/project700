@@ -249,9 +249,11 @@ describeIfDatabase("merchant item issue incident rule", () => {
         SELECT store_id, COUNT(*) AS count
         FROM incidents
         WHERE type = 'merchant_item_issues'
+          AND store_id IN ($1, $2)
         GROUP BY store_id
         ORDER BY store_id
-      `
+      `,
+      [first.store.id, second.store.id]
     );
     await verifier.end();
     expect(counts.rows).toHaveLength(2);
