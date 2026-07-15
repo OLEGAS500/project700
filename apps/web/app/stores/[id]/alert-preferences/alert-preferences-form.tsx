@@ -16,7 +16,8 @@ const incidentTypeLabels: Record<IncidentType, string> = {
   source_divergence: "Source divergence",
   seo_regression: "SEO regression",
   price_availability_mismatch: "Price and availability mismatch",
-  source_health: "Source health"
+  source_health: "Source health",
+  merchant_item_issues: "Merchant Center item issues"
 };
 
 export default function AlertPreferencesForm({
@@ -166,5 +167,6 @@ function mutedDescription(incidentType: IncidentType): string {
   if (incidentType === "catalog_drop") return "A confirmed group of products missing from monitored sources.";
   if (incidentType === "source_divergence") return "A material gap between comparable monitored sources.";
   if (incidentType === "seo_regression") return "A grouped regression in indexability or page signals.";
+  if (incidentType === "merchant_item_issues") return "Product issues reported by Merchant Center.";
   return "A grouped price or availability mismatch across high-confidence matches.";
 }

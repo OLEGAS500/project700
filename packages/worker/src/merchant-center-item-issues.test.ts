@@ -136,6 +136,7 @@ describe("collectMerchantCenterItemIssues", () => {
       ]
     });
     expect(result.metadata).toMatchObject({
+      merchantItemIssuesConfigurationHash: expect.any(String),
       productsSeen: 1,
       productsWithIssues: 1,
       issuesObserved: 1,

@@ -6,11 +6,13 @@ import {
   confirmFeedCatalogDropCandidate,
   createOrUpdateFeedSourceHealthIncident,
   createOrUpdatePriceAvailabilityMismatchIncident,
+  createOrUpdateMerchantItemIssuesIncident,
   createOrUpdateSeoRegressionIncident,
   createOrUpdateSourceDivergenceIncident,
   evaluateFeedCatalogDropCandidate,
   updateCatalogDropRecovery,
   updatePriceAvailabilityRecovery,
+  updateMerchantItemIssuesRecovery,
   updateSeoRegressionRecovery,
   updateSourceDivergenceRecovery,
   getLatestQueuedSnapshotForStore,
@@ -222,6 +224,8 @@ export async function runSourceSnapshotForStore(storeId: string): Promise<{
 
   await createOrUpdateSourceDivergenceIncident(store.id, queued.id);
   await updateSourceDivergenceRecovery(store.id, queued.id);
+  await createOrUpdateMerchantItemIssuesIncident(store.id, queued.id);
+  await updateMerchantItemIssuesRecovery(store.id, queued.id);
   await createOrUpdateFeedSourceHealthIncident(store.id, queued.id);
   await createOrUpdateSeoRegressionIncident(store.id, queued.id);
   await updateSeoRegressionRecovery(store.id, queued.id);

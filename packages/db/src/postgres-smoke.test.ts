@@ -161,7 +161,7 @@ describeIfDatabase("postgres smoke", () => {
 
     expect(Number(counts.rows[0].stores)).toBe(1);
     expect(Number(counts.rows[0].categories)).toBe(2);
-    expect(Number(counts.rows[0].alert_preferences)).toBe(5);
+    expect(Number(counts.rows[0].alert_preferences)).toBe(6);
     expect(Number(counts.rows[0].store_alert_preferences)).toBe(1);
     expect(Number(counts.rows[0].snapshots)).toBe(1);
 
@@ -194,7 +194,8 @@ describeIfDatabase("postgres smoke", () => {
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
       "0007_dashboard_read_models.sql",
-      "0008_merchant_center_oauth.sql"
+      "0008_merchant_center_oauth.sql",
+      "0009_merchant_item_issue_incidents.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
@@ -204,7 +205,8 @@ describeIfDatabase("postgres smoke", () => {
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
       "0007_dashboard_read_models.sql",
-      "0008_merchant_center_oauth.sql"
+      "0008_merchant_center_oauth.sql",
+      "0009_merchant_item_issue_incidents.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });

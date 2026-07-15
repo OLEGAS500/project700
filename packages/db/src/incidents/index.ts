@@ -27,6 +27,16 @@ import { upsertIncidentSignal } from "./signals";
 export { createOrUpdateSeoRegressionIncident } from "./seo-regression";
 export { createOrUpdateFeedSourceHealthIncident } from "./source-health";
 export {
+  buildMerchantItemIssuesEvaluation,
+  createOrUpdateMerchantItemIssuesIncident,
+  getMerchantItemIssuesObservation,
+  merchantItemIssuesConfigurationHash,
+  merchantItemIssuesFingerprint,
+  updateMerchantItemIssuesRecovery,
+  type MerchantItemIssuesEvaluation,
+  type MerchantItemIssuesObservation
+} from "./merchant-item-issues";
+export {
   acknowledgeIncident,
   addIncidentComment,
   getIncidentDetail,

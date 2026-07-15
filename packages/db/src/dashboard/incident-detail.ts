@@ -80,6 +80,10 @@ export type DashboardIncidentDetail = {
     offerId: string | null;
     title: string | null;
     url: string | null;
+    issueCode?: string | null;
+    issueSeverity?: string | null;
+    affectedAttribute?: string | null;
+    reportingContext?: string | null;
   }>;
   comments: Array<{
     id: string;
@@ -232,13 +236,23 @@ function normalizeSamples(value: unknown): DashboardIncidentDetail["samples"] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!isRecord(item)) return [];
-    const sample = {
+    const sample: DashboardIncidentDetail["samples"][number] = {
       stableKey: nullableText(item.stableKey) ?? nullableText(item.stable_key),
       offerId: nullableText(item.offerId) ?? nullableText(item.offer_id),
       title: nullableText(item.title),
       url: nullableText(item.url)
     };
-    return sample.stableKey || sample.offerId || sample.title || sample.url ? [sample] : [];
+    const issueCode = nullableText(item.issueCode) ?? nullableText(item.issue_code);
+    const issueSeverity = nullableText(item.issueSeverity) ?? nullableText(item.issue_severity);
+    const affectedAttribute = nullableText(item.affectedAttribute) ?? nullableText(item.affected_attribute);
+    const reportingContext = nullableText(item.reportingContext) ?? nullableText(item.reporting_context);
+    if (issueCode) sample.issueCode = issueCode;
+    if (issueSeverity) sample.issueSeverity = issueSeverity;
+    if (affectedAttribute) sample.affectedAttribute = affectedAttribute;
+    if (reportingContext) sample.reportingContext = reportingContext;
+    return sample.stableKey || sample.offerId || sample.title || sample.url || sample.issueCode
+      ? [sample]
+      : [];
   });
 }
 

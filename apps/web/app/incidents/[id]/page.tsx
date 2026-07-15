@@ -186,6 +186,8 @@ function SignalSection({ signals }: { signals: DashboardIncidentDetail["signals"
 }
 
 function SampleSection({ samples }: { samples: DashboardIncidentDetail["samples"] }) {
+  const hasIssueDetails = samples.some((sample) => sample.issueCode);
+
   return (
     <DetailSection title="Evidence samples" description="Representative items captured when the incident was evaluated.">
       {samples.length === 0 ? (
@@ -199,6 +201,9 @@ function SampleSection({ samples }: { samples: DashboardIncidentDetail["samples"
                 <th scope="col">Stable key</th>
                 <th scope="col">Offer ID</th>
                 <th scope="col">URL</th>
+                {hasIssueDetails ? <th scope="col">Issue</th> : null}
+                {hasIssueDetails ? <th scope="col">Severity</th> : null}
+                {hasIssueDetails ? <th scope="col">Attribute</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -218,6 +223,9 @@ function SampleSection({ samples }: { samples: DashboardIncidentDetail["samples"
                         "Unavailable"
                       )}
                     </td>
+                    {hasIssueDetails ? <td>{sample.issueCode ?? "-"}</td> : null}
+                    {hasIssueDetails ? <td>{sample.issueSeverity ?? "-"}</td> : null}
+                    {hasIssueDetails ? <td>{sample.affectedAttribute ?? "-"}</td> : null}
                   </tr>
                 );
               })}

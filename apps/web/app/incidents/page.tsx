@@ -44,7 +44,8 @@ const typeLabels = {
   source_divergence: "Source divergence",
   seo_regression: "SEO regression",
   price_availability_mismatch: "Price / availability mismatch",
-  source_health: "Source health"
+  source_health: "Source health",
+  merchant_item_issues: "Merchant Center item issues"
 } as const;
 
 const likelySourceLabels = {

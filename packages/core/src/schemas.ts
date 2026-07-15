@@ -62,7 +62,8 @@ export const incidentTypeSchema = z.enum([
   "source_divergence",
   "seo_regression",
   "price_availability_mismatch",
-  "source_health"
+  "source_health",
+  "merchant_item_issues"
 ]);
 
 export const incidentLikelySourceSchema = z.enum([
@@ -119,7 +120,7 @@ export const alertPreferencesSchema = z
     enabled: z.boolean(),
     emailEnabled: z.boolean(),
     telegramEnabled: z.boolean(),
-    mutedIncidentTypes: z.array(incidentTypeSchema).max(5),
+    mutedIncidentTypes: z.array(incidentTypeSchema).max(incidentTypeSchema.options.length),
     notifyOnOpen: z.boolean(),
     notifyOnWorsening: z.boolean(),
     notifyOnRecovery: z.boolean(),

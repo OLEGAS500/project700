@@ -4,6 +4,7 @@ import {
   createStoreInputSchema,
   emailDestinationInputSchema,
   incidentLikelySourceSchema,
+  incidentTypeSchema,
   merchantCenterConnectionInputSchema,
   sourceCheckStatusSchema,
   telegramDestinationInputSchema,
@@ -103,6 +104,11 @@ describe("core schemas", () => {
       updateAlertPreferencesInputSchema.safeParse({ worseningAffectedCountPercent: 1.1 }).success
     ).toBe(false);
     expect(updateAlertPreferencesInputSchema.safeParse({ smsEnabled: true }).success).toBe(false);
+    expect(
+      updateAlertPreferencesInputSchema.safeParse({
+        mutedIncidentTypes: [...incidentTypeSchema.options]
+      }).success
+    ).toBe(true);
   });
 
   it("strictly validates Telegram destinations without accepting secrets", () => {

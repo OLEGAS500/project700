@@ -7,6 +7,7 @@ import {
 import {
   createQueuedSnapshot,
   getSnapshotStore,
+  merchantItemIssuesConfigurationHash,
   persistMerchantCenterItemIssuesResult,
   type SnapshotRecord
 } from "@eim/db";
@@ -107,11 +108,11 @@ export async function collectMerchantCenterItemIssues(
   const endpoint = buildMerchantProductsEndpoint(input.accountId);
 
   if (!input.accountId) {
-    return buildResult(startedAt, endpoint, {
+    return addConfigurationMetadata(input.accountId, buildResult(startedAt, endpoint, {
       status: "authentication_failed",
       errorCode: "merchant_center_not_connected",
       errorMessage: "Merchant Center is not connected."
-    });
+    }));
   }
 
   const access = await resolveMerchantCenterAccessToken({
@@ -122,10 +123,10 @@ export async function collectMerchantCenterItemIssues(
   });
 
   if ("status" in access) {
-    return buildResult(startedAt, endpoint, access);
+    return addConfigurationMetadata(input.accountId, buildResult(startedAt, endpoint, access));
   }
 
-  return fetchMerchantProducts({
+  const result = await fetchMerchantProducts({
     endpoint,
     accessToken: access.accessToken,
     fetchImpl,
@@ -133,6 +134,8 @@ export async function collectMerchantCenterItemIssues(
     startedAt,
     limits
   });
+
+  return addConfigurationMetadata(input.accountId, result);
 }
 
 export async function runMerchantCenterItemIssuesSnapshotForStore(storeId: string): Promise<{
@@ -775,6 +778,21 @@ function buildResult(
     errorMessage: input.errorMessage,
     errorSamples: input.errorSamples,
     metadata: input.metadata
+  };
+}
+
+function addConfigurationMetadata(
+  accountId: string | null,
+  result: SourceCheckResult
+): SourceCheckResult {
+  if (!accountId) return result;
+
+  return {
+    ...result,
+    metadata: {
+      ...(isRecord(result.metadata) ? result.metadata : {}),
+      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId)
+    }
   };
 }
 

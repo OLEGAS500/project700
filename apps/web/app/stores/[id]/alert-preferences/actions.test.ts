@@ -65,7 +65,14 @@ describe("alert preferences server action", () => {
           notifyOnRecovery: "on",
           worseningAffectedCountPercent: "33.333",
           worseningSeverityIncrease: "on",
-          mutedIncidentTypes: ["source_health", "seo_regression"]
+          mutedIncidentTypes: [
+            "catalog_drop",
+            "source_divergence",
+            "seo_regression",
+            "price_availability_mismatch",
+            "source_health",
+            "merchant_item_issues"
+          ]
         })
       )
     ).rejects.toThrow(`NEXT_REDIRECT:/stores/${storeId}/alert-preferences`);
@@ -74,7 +81,14 @@ describe("alert preferences server action", () => {
       enabled: true,
       emailEnabled: true,
       telegramEnabled: true,
-      mutedIncidentTypes: ["source_health", "seo_regression"],
+      mutedIncidentTypes: [
+        "catalog_drop",
+        "source_divergence",
+        "seo_regression",
+        "price_availability_mismatch",
+        "source_health",
+        "merchant_item_issues"
+      ],
       notifyOnOpen: true,
       notifyOnWorsening: false,
       notifyOnRecovery: true,
