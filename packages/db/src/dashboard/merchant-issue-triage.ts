@@ -11,6 +11,9 @@ export type DashboardMerchantIssueSummary = {
   totalProducts: number;
   totalIssues: number;
   truncated: boolean;
+  productsTruncated: boolean;
+  issuesTruncated: boolean;
+  groupsTruncated: boolean;
   issueGroups: Array<{
     code: string;
     issueCount: number;
@@ -31,6 +34,14 @@ export type DashboardMerchantIssueSummary = {
 };
 
 const maximumIssueTextLength = 256;
+const maximumProducts = 500;
+const maximumIssuesPerProduct = 100;
+const maximumNormalizedIssues = maximumProducts * maximumIssuesPerProduct;
+const maximumIssueGroups = 100;
+const maximumGroupSeverities = 8;
+const maximumGroupAttributes = 16;
+const maximumProductIssueCodes = 16;
+const maximumProductAttributes = 16;
 const maximumPrioritizedProducts = 50;
 
 type NormalizedIssue = {
@@ -49,19 +60,25 @@ type IssueGroup = {
 
 export function buildMerchantIssueSummary(
   rows: MerchantIssueTriageSourceRow[],
-  truncated = false
+  productsTruncated = false
 ): DashboardMerchantIssueSummary {
   const groups = new Map<string, IssueGroup>();
   const products: DashboardMerchantIssueSummary["prioritizedProducts"] = [];
+  let issuesTruncated = false;
+  let groupsTruncated = false;
+  let normalizedIssuesProcessed = 0;
 
-  for (const row of rows) {
+  for (const row of rows.slice(0, maximumProducts)) {
     const stableKey = boundedText(row.stableKey);
     const offerId = boundedText(row.offerId);
     const title = boundedText(row.title);
     const productKey = stableKey ?? offerId ?? title;
     if (!productKey) continue;
 
-    const issues = deduplicateIssues(row.issues);
+    const normalized = deduplicateIssues(row.issues);
+    const issues = normalized.issues.slice(0, maximumNormalizedIssues - normalizedIssuesProcessed);
+    issuesTruncated ||= normalized.truncated || issues.length < normalized.issues.length;
+    normalizedIssuesProcessed += issues.length;
     if (issues.length === 0) continue;
 
     const issueCodes = new Set<string>();
@@ -71,22 +88,33 @@ export function buildMerchantIssueSummary(
     for (const issue of issues) {
       const priority = priorityForSeverity(issue.severity);
       productPriority = higherPriority(productPriority, priority);
-      issueCodes.add(issue.code);
-      affectedAttributes.add(issue.attribute);
+      if (issueCodes.size < maximumProductIssueCodes) issueCodes.add(issue.code);
+      else issuesTruncated = true;
+      if (affectedAttributes.size < maximumProductAttributes) affectedAttributes.add(issue.attribute);
+      else issuesTruncated = true;
 
-      const group = groups.get(issue.code) ?? {
-        issueCount: 0,
-        productKeys: new Set<string>(),
-        priority: "normal",
-        severities: new Set<string>(),
-        attributes: new Set<string>()
-      };
+      let group = groups.get(issue.code);
+      if (!group) {
+        if (groups.size >= maximumIssueGroups) {
+          groupsTruncated = true;
+          continue;
+        }
+        group = {
+          issueCount: 0,
+          productKeys: new Set<string>(),
+          priority: "normal",
+          severities: new Set<string>(),
+          attributes: new Set<string>()
+        };
+        groups.set(issue.code, group);
+      }
       group.issueCount += 1;
       group.productKeys.add(productKey);
       group.priority = higherPriority(group.priority, priority);
-      group.severities.add(issue.severity);
-      group.attributes.add(issue.attribute);
-      groups.set(issue.code, group);
+      if (group.severities.size < maximumGroupSeverities) group.severities.add(issue.severity);
+      else groupsTruncated = true;
+      if (group.attributes.size < maximumGroupAttributes) group.attributes.add(issue.attribute);
+      else groupsTruncated = true;
     }
 
     products.push({
@@ -120,18 +148,21 @@ export function buildMerchantIssueSummary(
   return {
     totalProducts: products.length,
     totalIssues: products.reduce((total, product) => total + product.issueCount, 0),
-    truncated,
+    truncated: productsTruncated || rows.length > maximumProducts || issuesTruncated || groupsTruncated,
+    productsTruncated: productsTruncated || rows.length > maximumProducts,
+    issuesTruncated,
+    groupsTruncated,
     issueGroups,
     prioritizedProducts
   };
 }
 
-function deduplicateIssues(value: unknown): NormalizedIssue[] {
-  if (!Array.isArray(value)) return [];
+function deduplicateIssues(value: unknown): { issues: NormalizedIssue[]; truncated: boolean } {
+  if (!Array.isArray(value)) return { issues: [], truncated: false };
 
   const seen = new Set<string>();
   const issues: NormalizedIssue[] = [];
-  for (const item of value) {
+  for (const item of value.slice(0, maximumIssuesPerProduct)) {
     if (!isRecord(item)) continue;
     const code = boundedText(item.code);
     if (!code) continue;
@@ -142,7 +173,7 @@ function deduplicateIssues(value: unknown): NormalizedIssue[] {
     seen.add(key);
     issues.push({ code, severity, attribute });
   }
-  return issues;
+  return { issues, truncated: value.length > maximumIssuesPerProduct };
 }
 
 function comparePrioritizedProducts(

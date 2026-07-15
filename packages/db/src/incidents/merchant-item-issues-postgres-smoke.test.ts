@@ -165,6 +165,9 @@ describeIfDatabase("merchant item issue incident rule", () => {
       totalProducts: 2,
       totalIssues: 2,
       truncated: false,
+      productsTruncated: false,
+      issuesTruncated: false,
+      groupsTruncated: false,
       issueGroups: expect.arrayContaining([
         expect.objectContaining({
           code: "invalid_gtin",

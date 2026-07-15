@@ -14,7 +14,7 @@ import {
 const maximumSamples = 20;
 const maximumTimelineEvents = 100;
 const maximumComments = 100;
-const maximumMerchantIssueProducts = 501;
+const maximumMerchantIssueProducts = 500;
 
 type DashboardIncidentDetailRow = DashboardIncidentListRow & {
   store_domain: string;
@@ -210,7 +210,7 @@ export async function getDashboardIncidentDetail(
         ORDER BY stable_key ASC
         LIMIT $4
       `,
-      [incident.opened_snapshot_id, incident.store_id, incident.type, maximumMerchantIssueProducts]
+      [incident.opened_snapshot_id, incident.store_id, incident.type, maximumMerchantIssueProducts + 1]
     )
   ]);
 
@@ -223,7 +223,7 @@ export async function getDashboardIncidentDetail(
             title: row.title,
             issues: row.merchant_issues_json
           })),
-          merchantIssueResult.rows.length >= maximumMerchantIssueProducts
+          merchantIssueResult.rows.length > maximumMerchantIssueProducts
         )
       : undefined;
 

@@ -269,7 +269,11 @@ function MerchantIssueTriageSection({
       )}
 
       {summary.truncated ? (
-        <p className="detail-empty">Showing a bounded subset of products for investigation.</p>
+        <div className="detail-truncation-notes" role="status">
+          {summary.productsTruncated ? <p>Showing a bounded subset of affected products.</p> : null}
+          {summary.issuesTruncated ? <p>Some nested issue details were omitted for safety.</p> : null}
+          {summary.groupsTruncated ? <p>Issue groups and group attributes are bounded.</p> : null}
+        </div>
       ) : null}
     </DetailSection>
   );

@@ -26,6 +26,9 @@ describe("merchant issue triage", () => {
       totalProducts: 2,
       totalIssues: 3,
       truncated: false,
+      productsTruncated: false,
+      issuesTruncated: false,
+      groupsTruncated: false,
       issueGroups: [
         {
           code: "invalid_gtin",
@@ -89,5 +92,45 @@ describe("merchant issue triage", () => {
       expect.objectContaining({ code: "issue_code", issueCount: 51, productCount: 51 })
     ]);
     expect(summary.truncated).toBe(true);
+  });
+
+  it("bounds nested issues and grouped output from adversarial rows", () => {
+    const summary = buildMerchantIssueSummary(
+      Array.from({ length: 501 }, (_, productIndex) => ({
+        stableKey: `offer:${productIndex}`,
+        offerId: `sku-${productIndex}`,
+        title: `Product ${productIndex}`,
+        issues:
+          productIndex === 0
+            ? [
+                ...Array.from({ length: 1_000 }, (_, issueIndex) => ({
+                  code: issueIndex % 2 === 0 ? `critical_${issueIndex}` : `attribute_${issueIndex}`,
+                  severity: issueIndex === 0 ? "critical" : "warning",
+                  attribute: `attribute_${issueIndex}`
+                })),
+                ...Array.from({ length: 1_000 }, () => ({ malformed: true }))
+              ]
+            : [
+                { code: `code_${productIndex}`, severity: "warning", attribute: `attribute_${productIndex}` },
+                { malformed: true }
+              ]
+      }))
+    );
+
+    expect(summary.truncated).toBe(true);
+    expect(summary.productsTruncated).toBe(true);
+    expect(summary.issuesTruncated).toBe(true);
+    expect(summary.groupsTruncated).toBe(true);
+    expect(summary.prioritizedProducts).toHaveLength(50);
+    expect(summary.prioritizedProducts[0]).toMatchObject({
+      stableKey: "offer:0",
+      priority: "critical"
+    });
+    expect(summary.issueGroups.length).toBeLessThanOrEqual(100);
+    expect(summary.issueGroups.every((group) => group.severities.length <= 8)).toBe(true);
+    expect(summary.issueGroups.every((group) => group.attributes.length <= 16)).toBe(true);
+    expect(summary.prioritizedProducts.every((product) => product.issueCodes.length <= 16)).toBe(true);
+    expect(summary.prioritizedProducts.every((product) => product.affectedAttributes.length <= 16)).toBe(true);
+    expect(summary.totalIssues).toBeLessThanOrEqual(50_000);
   });
 });

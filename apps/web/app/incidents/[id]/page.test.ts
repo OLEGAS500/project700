@@ -71,6 +71,9 @@ describe("incident detail page", () => {
       totalProducts: 2,
       totalIssues: 3,
       truncated: false,
+      productsTruncated: false,
+      issuesTruncated: false,
+      groupsTruncated: false,
       issueGroups: [
         {
           code: "invalid_gtin",
