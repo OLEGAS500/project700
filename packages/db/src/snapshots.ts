@@ -141,7 +141,40 @@ export async function persistSourceCheckResult(
   storeId: string,
   result: SourceCheckResult
 ): Promise<SnapshotRecord> {
+  return withTransaction((client) =>
+    persistSourceCheckResultWithClient(client, snapshotId, storeId, result)
+  );
+}
+
+export async function persistMerchantCenterItemIssuesResult(
+  snapshotId: string,
+  storeId: string,
+  result: SourceCheckResult
+): Promise<SnapshotRecord> {
   return withTransaction(async (client) => {
+    if (result.status === "success") {
+      await client.query(
+        `
+          DELETE FROM source_items
+          WHERE snapshot_id = $1
+            AND store_id = $2
+            AND source = 'merchant_center'
+            AND metadata_json ->> 'merchantDataKind' = 'item_issues'
+        `,
+        [snapshotId, storeId]
+      );
+    }
+
+    return persistSourceCheckResultWithClient(client, snapshotId, storeId, result);
+  });
+}
+
+async function persistSourceCheckResultWithClient(
+  client: pg.PoolClient,
+  snapshotId: string,
+  storeId: string,
+  result: SourceCheckResult
+): Promise<SnapshotRecord> {
     await client.query(
       `
         UPDATE snapshots
@@ -340,8 +373,7 @@ export async function persistSourceCheckResult(
       [snapshotId, ...countValues]
     );
 
-    return mapSnapshot(updated.rows[0]);
-  });
+  return mapSnapshot(updated.rows[0]);
 }
 
 export const persistSitemapCheckResult = persistSourceCheckResult;
