@@ -614,13 +614,6 @@ textarea:disabled {
   font-size: 12px;
 }
 
-.row-links {
-  display: grid;
-  gap: 8px;
-  min-width: 76px;
-}
-
-.row-links a,
 .dashboard-failure-state a {
   color: var(--accent-dark);
   font-size: 12px;
@@ -657,18 +650,6 @@ textarea:disabled {
 
 .dashboard-failure-state h2 {
   color: var(--danger);
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .dashboard-loading-header {

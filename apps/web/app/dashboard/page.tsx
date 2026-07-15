@@ -77,7 +77,6 @@ export default async function DashboardPage() {
                       <th scope="col">Source observations</th>
                       <th scope="col">Business incidents</th>
                       <th scope="col">Last check</th>
-                      <th scope="col"><span className="sr-only">Links</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -129,12 +128,6 @@ function StoreRow({ store }: { store: DashboardStoreSummary }) {
         </div>
       </td>
       <td className="last-check">{formatTimestamp(store.lastCheckedAt)}</td>
-      <td>
-        <nav className="row-links" aria-label={`Store links for ${store.name}`}>
-          <Link href={`/api/incidents?storeId=${encodeURIComponent(store.id)}`}>Incidents</Link>
-          <Link href={`/api/stores/${store.id}/dashboard`}>Store detail</Link>
-        </nav>
-      </td>
     </tr>
   );
 }
