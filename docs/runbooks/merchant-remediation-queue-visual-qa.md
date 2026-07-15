@@ -52,7 +52,7 @@ export DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DATABASE'
 npm run dev
 ```
 
-Open the printed `Incident URL` in the browser. The seeded opened snapshot contains exactly 60 queue products, so the default queue limit produces 50 rows on the first page and 10 on the second page. The first product contains long Unicode stable/title/offer values, two issue codes sharing a 256-code-point prefix, two attributes split at the same Unicode boundary, malformed issue fields, and more than 100 nested issues. The remaining products cover critical, high, and normal priorities and multiple issue codes/severities. A later snapshot contains a different product and must not change the queue.
+Open the printed `Incident URL` in the browser. The seeded opened snapshot contains exactly 60 queue products. The incident UI does not pass a `limit`, so the production default of 25 produces three pages: 25 rows, 25 rows, then 10 rows. The first product contains long Unicode stable/title/offer values, two issue codes sharing a 256-code-point prefix, two attributes split at the same Unicode boundary, malformed issue fields, and more than 100 nested issues. The remaining products cover critical, high, and normal priorities and multiple issue codes/severities. A later snapshot contains a different product and must not change the queue.
 
 After the checklist, stop the web server and remove only the fixture:
 

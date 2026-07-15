@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   console.log(`Opened snapshot ID: ${target.openedSnapshotId}`);
   console.log(`Later snapshot ID: ${target.laterSnapshotId}`);
   console.log(`Queue items in opened snapshot: ${queueItemCount}`);
-  console.log("Expected pages at limit 50: 50 items, then 10 items.");
+  console.log("Expected pages at the default UI limit 25: 25 items, 25 items, then 10 items.");
   console.log("Cleanup command: npm run cleanup:merchant-remediation-qa");
 }
 

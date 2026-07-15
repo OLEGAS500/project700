@@ -37,6 +37,15 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run test:postgres
+      - name: Smoke Merchant remediation QA fixture
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          npm run db:migrate
+          npm run seed:merchant-remediation-qa
+          npm run seed:merchant-remediation-qa
+          npm run cleanup:merchant-remediation-qa
+          npm run cleanup:merchant-remediation-qa
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
