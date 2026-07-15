@@ -370,8 +370,29 @@ describeIfDatabase("postgres smoke", () => {
         )
       ).rejects.toBeInstanceOf(MerchantCenterOAuthRefreshInProgressError);
 
+      const expiredLeaseClient = new Client({ connectionString: dbUrlWithSchema });
+      await expiredLeaseClient.connect();
+      await expiredLeaseClient.query(
+        `
+          UPDATE merchant_center_oauth_credentials
+          SET refresh_lock_expires_at = clock_timestamp() - INTERVAL '1 second'
+          WHERE store_id = $1
+        `,
+        [created.store.id]
+      );
+      await expiredLeaseClient.end();
+
+      await expect(getMerchantCenterOAuthStatus(created.store.id)).resolves.toMatchObject({
+        credentials: { refreshInProgress: false }
+      });
+
+      const reclaimedLockId = "70000000-0000-4000-8000-000000000004";
       await expect(
-        completeMerchantCenterOAuthRefresh(created.store.id, lockId, {
+        claimMerchantCenterOAuthRefresh(created.store.id, reclaimedLockId)
+      ).resolves.toMatchObject({ accessToken: "access-secret" });
+
+      await expect(
+        completeMerchantCenterOAuthRefresh(created.store.id, reclaimedLockId, {
           accessToken: "new-access-secret",
           refreshToken: "refresh-secret",
           tokenType: "Bearer",

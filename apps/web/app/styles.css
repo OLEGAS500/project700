@@ -1068,6 +1068,220 @@ textarea:disabled {
   line-height: 1.4;
 }
 
+.merchant-center-shell {
+  max-width: 1120px;
+}
+
+.merchant-center-domain {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.merchant-center-banner {
+  display: grid;
+  gap: 4px;
+  margin: 24px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.merchant-center-banner span {
+  color: var(--muted);
+}
+
+.merchant-center-banner-success {
+  border-color: rgba(43, 123, 77, 0.35);
+  background: rgba(43, 123, 77, 0.06);
+}
+
+.merchant-center-banner-attention {
+  border-color: rgba(145, 100, 0, 0.35);
+  background: rgba(145, 100, 0, 0.06);
+}
+
+.merchant-center-banner-failure {
+  border-color: rgba(169, 52, 52, 0.38);
+  background: rgba(169, 52, 52, 0.06);
+}
+
+.merchant-center-overview {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 28px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.merchant-center-overview h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.merchant-center-eyebrow {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.merchant-center-copy,
+.merchant-center-help {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.merchant-center-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.merchant-center-status-success {
+  border-color: rgba(43, 123, 77, 0.35);
+  color: var(--success);
+}
+
+.merchant-center-status-attention {
+  border-color: rgba(145, 100, 0, 0.35);
+  color: #745300;
+}
+
+.merchant-center-status-failure {
+  border-color: rgba(169, 52, 52, 0.38);
+  color: var(--danger);
+}
+
+.merchant-center-status-neutral {
+  color: var(--muted);
+}
+
+.merchant-center-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  padding: 28px 0 32px;
+}
+
+.merchant-center-section {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.merchant-center-section .detail-section-heading {
+  margin-bottom: 20px;
+}
+
+.merchant-center-section .detail-section-heading p {
+  text-align: left;
+}
+
+.merchant-center-start-button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.merchant-center-start-button:disabled,
+.merchant-center-refresh button:disabled,
+.merchant-center-disconnect-form button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.merchant-center-help {
+  margin-top: 14px;
+  color: #745300;
+}
+
+.merchant-center-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+.merchant-center-facts > div {
+  min-width: 0;
+  padding: 14px 12px 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.merchant-center-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.merchant-center-facts dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.merchant-center-refresh,
+.merchant-center-disconnect-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.merchant-center-refresh button,
+.secondary-danger-button {
+  width: fit-content;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-dark);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.merchant-center-refresh button:hover {
+  border-color: var(--accent);
+  background: rgba(37, 111, 76, 0.06);
+}
+
+.secondary-danger-button {
+  border-color: rgba(169, 52, 52, 0.38);
+  color: var(--danger);
+}
+
+.secondary-danger-button:hover {
+  background: rgba(169, 52, 52, 0.06);
+}
+
+.merchant-center-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .back-link {
   padding-bottom: 3px;
   white-space: nowrap;
@@ -2070,6 +2284,23 @@ textarea:disabled {
 
   .detail-section {
     padding: 24px 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .merchant-center-overview {
+    display: grid;
+    align-items: start;
+  }
+
+  .merchant-center-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-center-start-button,
+  .merchant-center-refresh button,
+  .secondary-danger-button {
+    width: 100%;
   }
 }
 

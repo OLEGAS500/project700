@@ -39,7 +39,7 @@ describe("Merchant Center OAuth callback API", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it("consumes state once, exchanges the code server-side, and returns safe metadata", async () => {
+  it("consumes state once, exchanges the code server-side, and redirects safely", async () => {
     database.consumeMerchantCenterOAuthState.mockResolvedValue({
       storeId,
       redirectUri: "https://app.example.com/oauth/callback",
@@ -63,11 +63,10 @@ describe("Merchant Center OAuth callback API", () => {
       new Request("https://app.example.com/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
     );
 
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toMatchObject({ connected: true, storeId });
-    expect(JSON.stringify(body)).not.toContain("access-secret");
-    expect(JSON.stringify(body)).not.toContain("refresh-secret");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      `https://app.example.com/stores/${storeId}/merchant-center?oauth=connected`
+    );
     expect(database.consumeMerchantCenterOAuthState).toHaveBeenCalledWith("hashed-state");
     expect(database.completeMerchantCenterOAuthAuthorization).toHaveBeenCalledWith(
       "hashed-state",
@@ -92,11 +91,10 @@ describe("Merchant Center OAuth callback API", () => {
       new Request("https://app.example.com/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
     );
 
-    expect(response.status).toBe(409);
-    const body = await response.text();
-    expect(body).toContain("Merchant Center authorization is no longer valid");
-    expect(body).not.toContain("access-secret");
-    expect(body).not.toContain("refresh-secret");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      `https://app.example.com/stores/${storeId}/merchant-center?oauth=reconnect_required`
+    );
   });
 
   it("rejects replayed state and provider failures safely", async () => {
@@ -120,8 +118,10 @@ describe("Merchant Center OAuth callback API", () => {
     const failed = await GET(
       new Request("https://app.example.com/api/merchant-center/oauth/callback?state=used&code=auth-code")
     );
-    expect(failed.status).toBe(502);
-    expect(await failed.text()).not.toContain("provider secret diagnostics");
+    expect(failed.status).toBe(303);
+    expect(failed.headers.get("location")).toBe(
+      `https://app.example.com/stores/${storeId}/merchant-center?oauth=error`
+    );
   });
 
   it("rejects a callback when the configured redirect URI changed", async () => {
@@ -134,7 +134,9 @@ describe("Merchant Center OAuth callback API", () => {
     const response = await GET(
       new Request("https://app.example.com/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
     );
-    expect(response.status).toBe(400);
-    expect(await response.text()).not.toContain("old.example.com");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      `https://app.example.com/stores/${storeId}/merchant-center?oauth=error`
+    );
   });
 });
