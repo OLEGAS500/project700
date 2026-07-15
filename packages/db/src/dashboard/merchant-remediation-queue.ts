@@ -189,6 +189,7 @@ export async function listDashboardMerchantRemediationQueue(
           OR LEFT(COALESCE(offer_id, ''), ${maximumQueueSortKeyLength}) ILIKE $5 ESCAPE '\\'
           OR title_key ILIKE $5 ESCAPE '\\'
         ))
+        AND ($9::text IS NULL OR $9::text IS NOT NULL)
         ${cursorCondition}
       ORDER BY ${orderBy}
       LIMIT $11
