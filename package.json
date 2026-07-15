@@ -11,7 +11,7 @@
     "build": "npm run build -w @eim/web",
     "lint": "npm run lint -w @eim/web",
     "test": "vitest run",
-    "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts",
+    "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts packages/worker/src/merchant-center-status-postgres-smoke.test.ts",
     "typecheck": "tsc --noEmit",
     "worker:telegram": "tsx apps/worker/src/run-telegram-alerts.ts",
     "worker:email": "tsx apps/worker/src/run-email-alerts.ts"

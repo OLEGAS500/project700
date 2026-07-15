@@ -1,5 +1,6 @@
 export * from "./alert-deliveries";
 export * from "./email-configuration";
+export * from "./merchant-center-status";
 export * from "./resend-email-transport";
 export * from "./snapshots";
 export * from "./sources";
