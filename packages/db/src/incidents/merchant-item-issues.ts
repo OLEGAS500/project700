@@ -175,6 +175,9 @@ export async function createOrUpdateMerchantItemIssuesIncident(
 ): Promise<string | null> {
   return withTransaction(async (client) => {
     await lockMerchantItemIssuesRule(client, storeId);
+    if (!(await lockMerchantItemIssuesSnapshot(client, storeId, snapshotId))) {
+      return null;
+    }
 
     const read = await readMerchantItemIssuesObservation(storeId, snapshotId, client, true);
     if (!read || read.observation.status !== "success" || !read.observation.configurationHash) {
@@ -266,6 +269,9 @@ export async function updateMerchantItemIssuesRecovery(
 ): Promise<CatalogDropRecoveryResult[]> {
   return withTransaction(async (client) => {
     await lockMerchantItemIssuesRule(client, storeId);
+    if (!(await lockMerchantItemIssuesSnapshot(client, storeId, snapshotId))) {
+      return [];
+    }
     const read = await readMerchantItemIssuesObservation(storeId, snapshotId, client, true);
 
     if (!read || read.observation.status !== "success" || !read.observation.configurationHash) {
@@ -394,6 +400,25 @@ async function lockMerchantItemIssuesRule(
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
     `merchant_item_issues_rule:${storeId}`
   ]);
+}
+
+async function lockMerchantItemIssuesSnapshot(
+  client: pg.PoolClient,
+  storeId: string,
+  snapshotId: string
+): Promise<boolean> {
+  const result = await client.query(
+    `
+      SELECT snapshots.id
+      FROM snapshots
+      JOIN stores ON stores.id = snapshots.store_id
+      WHERE snapshots.id = $2 AND snapshots.store_id = $1
+      FOR UPDATE OF snapshots, stores
+    `,
+    [storeId, snapshotId]
+  );
+
+  return result.rows.length === 1;
 }
 
 async function getMerchantItemIssueProducts(
