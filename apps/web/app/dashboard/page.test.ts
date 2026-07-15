@@ -34,8 +34,10 @@ describe("stores overview", () => {
     expect(html).toContain(`href="/stores/${storeId}/maintenance"`);
     expect(html).toContain(`href="/stores/${storeId}/thresholds"`);
     expect(html).toContain(`href="/stores/${storeId}/alert-preferences"`);
+    expect(html).toContain(`href="/stores/${storeId}/destinations"`);
     expect(html).toContain("Maintenance");
     expect(html).toContain("Thresholds");
     expect(html).toContain("Alert preferences");
+    expect(html).toContain("Destinations");
   });
 });

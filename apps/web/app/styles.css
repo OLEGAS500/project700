@@ -919,6 +919,155 @@ textarea:disabled {
   line-height: 1.4;
 }
 
+.destinations-shell {
+  max-width: 1120px;
+}
+
+.destinations-domain {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.destinations-intro {
+  padding: 30px 0 20px;
+}
+
+.destinations-intro h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.destinations-intro p {
+  max-width: 720px;
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.destinations-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  padding-bottom: 30px;
+}
+
+.destination-section {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.destination-section .detail-section-heading {
+  margin-bottom: 20px;
+}
+
+.destination-section .detail-section-heading p {
+  text-align: left;
+}
+
+.destination-form {
+  display: grid;
+  gap: 16px;
+}
+
+.destination-field {
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.destination-field em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.destination-field small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.destination-field textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.destination-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.destination-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.destination-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.destination-toggle > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.destination-toggle em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.destination-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.destination-status-neutral {
+  color: var(--muted);
+}
+
+.destination-status-enabled {
+  color: var(--success);
+}
+
+.destination-status-disabled {
+  color: #745300;
+}
+
+.destination-form button {
+  width: fit-content;
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.destination-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .back-link {
   padding-bottom: 3px;
   white-space: nowrap;
@@ -1868,6 +2017,14 @@ textarea:disabled {
   }
 
   .alert-preferences-form-footer button {
+    width: 100%;
+  }
+
+  .destinations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .destination-form button {
     width: 100%;
   }
 }
