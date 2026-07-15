@@ -31,7 +31,7 @@ type IncidentDetailPageProps = {
 const incidentIdSchema = z.string().uuid();
 const merchantRemediationQuerySchema = z.object({
   issueCode: z.string().trim().min(1).max(256).optional(),
-  severity: z.string().trim().min(1).max(64).optional(),
+  severity: z.string().trim().min(1).max(256).optional(),
   priority: z.enum(["critical", "high", "normal"]).optional(),
   search: z.string().trim().min(1).max(200).optional(),
   sort: z.enum(["priority", "issue_count", "stable_key", "title"]).default("priority"),

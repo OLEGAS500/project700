@@ -15,12 +15,17 @@ function withSearchPath(connectionString: string, schema: string): string {
   return url.toString();
 }
 
-function issueItem(stableKey: string, code: string, severity = "error"): SourceItemInput {
+function issueItem(
+  stableKey: string,
+  code: string,
+  severity = "error",
+  title = `Product ${stableKey}`
+): SourceItemInput {
   return {
     source: "merchant_center",
     stableKey,
     offerId: stableKey.replace("offer:", ""),
-    title: `Product ${stableKey}`,
+    title,
     merchantStatus: "disapproved",
     merchantIssues: [
       {
@@ -38,6 +43,23 @@ function issueItem(stableKey: string, code: string, severity = "error"): SourceI
       productName: `accounts/123/products/${stableKey}`
     },
     rawHash: `${stableKey}:${code}:${severity}`
+  };
+}
+
+function issueItemWithCodes(stableKey: string, codes: string[]): SourceItemInput {
+  const item = issueItem(stableKey, codes[0] ?? "unknown_code");
+  return {
+    ...item,
+    merchantIssues: codes.map((code) => ({
+      code,
+      severity: "error",
+      resolution: "merchant_action",
+      attribute: "gtin",
+      reportingContext: "shopping_ads",
+      description: "Invalid product data",
+      applicableCountries: ["US"]
+    })),
+    rawHash: `${stableKey}:${codes.join(",")}`
   };
 }
 
@@ -103,6 +125,7 @@ describeIfDatabase("merchant item issue incident rule", () => {
       createStore,
       getDashboardIncidentDetail,
       listDashboardMerchantRemediationQueue,
+      InvalidDashboardMerchantRemediationCursorError,
       persistMerchantCenterItemIssuesResult,
       updateMerchantItemIssuesRecovery
     } = await import("@eim/db");
@@ -136,7 +159,10 @@ describeIfDatabase("merchant item issue incident rule", () => {
     await persistMerchantCenterItemIssuesResult(
       second.id,
       created.store.id,
-      issueResult([issueItem("offer:sku-1", "invalid_gtin"), issueItem("offer:sku-2", "missing_brand")])
+      issueResult([
+        issueItem("offer:sku-1", "invalid_gtin", "error", "😀".repeat(129)),
+        issueItem("offer:sku-2", "missing_brand")
+      ])
     );
     const incidentId = await createOrUpdateMerchantItemIssuesIncident(created.store.id, second.id);
     expect(incidentId).toMatch(/^[0-9a-f-]{36}$/);
@@ -197,6 +223,22 @@ describeIfDatabase("merchant item issue incident rule", () => {
       expect.objectContaining({ stableKey: "offer:sku-1", priority: "critical", issueCount: 1 })
     ]);
     expect(firstQueue.nextCursor).toBeTruthy();
+
+    await expect(
+      listDashboardMerchantRemediationQueue({
+        incidentId: incidentId!,
+        issueCode: "missing_brand",
+        cursor: firstQueue.nextCursor,
+        limit: 1
+      })
+    ).rejects.toBeInstanceOf(InvalidDashboardMerchantRemediationCursorError);
+    await expect(
+      listDashboardMerchantRemediationQueue({
+        incidentId: "70000000-0000-4000-8000-000000000099",
+        cursor: firstQueue.nextCursor,
+        limit: 1
+      })
+    ).rejects.toBeInstanceOf(InvalidDashboardMerchantRemediationCursorError);
 
     await expect(
       listDashboardMerchantRemediationQueue({
@@ -315,6 +357,59 @@ describeIfDatabase("merchant item issue incident rule", () => {
     expect(counts.rows).toHaveLength(2);
     expect(counts.rows.every((row) => row.count === "1")).toBe(true);
     expect(new Set(counts.rows.map((row) => row.store_id)).size).toBe(2);
+  });
+
+  it("uses the same bounded issue normalization for groups, filters, and counts", async () => {
+    const {
+      connectMerchantCenter,
+      createOrUpdateMerchantItemIssuesIncident,
+      createQueuedSnapshot,
+      createStore,
+      getDashboardIncidentDetail,
+      listDashboardMerchantRemediationQueue,
+      persistMerchantCenterItemIssuesResult
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Merchant Issue Normalization Store",
+      domain: "https://merchant-issue-normalization.example.com",
+      sitemapUrl: "https://merchant-issue-normalization.example.com/sitemap.xml",
+      feedUrl: "https://merchant-issue-normalization.example.com/feed.xml",
+      categoryUrls: ["https://merchant-issue-normalization.example.com/collections/all"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "987" });
+
+    const prefix = "issue_" + "x".repeat(250);
+    const firstCode = `${prefix}A`;
+    const secondCode = `${prefix}B`;
+    const first = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-normalization-1");
+    await persistMerchantCenterItemIssuesResult(
+      first.id,
+      created.store.id,
+      issueResult([issueItemWithCodes("offer:long-code", [firstCode])])
+    );
+    await expect(createOrUpdateMerchantItemIssuesIncident(created.store.id, first.id)).resolves.toBeNull();
+
+    const second = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-normalization-2");
+    await persistMerchantCenterItemIssuesResult(
+      second.id,
+      created.store.id,
+      issueResult([issueItemWithCodes("offer:long-code", [firstCode, secondCode])])
+    );
+    const incidentId = await createOrUpdateMerchantItemIssuesIncident(created.store.id, second.id);
+    expect(incidentId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const detail = await getDashboardIncidentDetail(incidentId!);
+    expect(detail?.merchantIssueSummary).toMatchObject({
+      totalIssues: 1,
+      issueGroups: [expect.objectContaining({ code: prefix, issueCount: 1 })]
+    });
+
+    await expect(
+      listDashboardMerchantRemediationQueue({ incidentId: incidentId!, issueCode: prefix })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ issueCount: 1, issueCodes: [prefix] })]
+    });
   });
 
   it("rejects observations captured for a previous Merchant account", async () => {

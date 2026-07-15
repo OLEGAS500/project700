@@ -1,4 +1,5 @@
 import { getPool } from "../client";
+import { createHash } from "node:crypto";
 import {
   buildMerchantIssueSummary,
   type MerchantIssuePriority,
@@ -55,29 +56,46 @@ type QueueRow = {
 };
 
 export type DashboardMerchantRemediationQueueCursor = {
-  version: 1;
+  version: 2;
   sort: DashboardMerchantRemediationSort;
   priorityRank: number;
   issueCount: number;
   stableKey: string;
   titleKey: string;
   sourceItemId: string;
+  filterFingerprint: string;
 };
 
 const defaultQueueLimit = 25;
 const maximumQueueLimit = 50;
 const maximumQueueSortKeyLength = 256;
 const maximumIssuesForQueueRow = 100;
+const maximumCursorLength = 2048;
+const cursorVersion = 2 as const;
 
 export async function listDashboardMerchantRemediationQueue(
   input: DashboardMerchantRemediationQueueInput
 ): Promise<DashboardMerchantRemediationQueueResult> {
-  const sort = input.sort ?? "priority";
+  const sort = isSort(input.sort) ? input.sort : "priority";
   const limit = Math.min(Math.max(input.limit ?? defaultQueueLimit, 1), maximumQueueLimit);
+  const issueCode = normalizeQueueFilter(input.issueCode, maximumQueueSortKeyLength);
+  const severity = normalizeQueueFilter(input.severity, maximumQueueSortKeyLength)?.toLowerCase() ?? null;
+  const priority = isPriority(input.priority) ? input.priority : null;
+  const search = normalizeQueueFilter(input.search, 200);
+  const filterFingerprint = createQueueFilterFingerprint({
+    incidentId: input.incidentId,
+    issueCode,
+    severity,
+    priority,
+    search,
+    sort
+  });
   const cursor = input.cursor ? decodeDashboardMerchantRemediationCursor(input.cursor) : null;
-  if (cursor && cursor.sort !== sort) throw new InvalidDashboardMerchantRemediationCursorError();
+  if (cursor && (cursor.sort !== sort || cursor.filterFingerprint !== filterFingerprint)) {
+    throw new InvalidDashboardMerchantRemediationCursorError();
+  }
 
-  const escapedSearch = input.search ? `%${escapeLikePattern(input.search)}%` : null;
+  const escapedSearch = search ? `%${escapeLikePattern(search)}%` : null;
   const orderBy = orderByFor(sort);
   const cursorCondition = cursorConditionFor(sort);
   const result = await getPool().query<QueueRow>(
@@ -128,6 +146,20 @@ export async function listDashboardMerchantRemediationQueue(
         FROM bounded_items
         CROSS JOIN LATERAL jsonb_array_elements(bounded_items.merchant_issues_json) AS issue
       ),
+      normalized_issues AS (
+        SELECT
+          id,
+          stable_key,
+          stable_key_key,
+          offer_id,
+          title,
+          merchant_issues_json,
+          details_truncated,
+          NULLIF(LEFT(BTRIM(issue ->> 'code'), ${maximumQueueSortKeyLength}), '') AS code,
+          LOWER(LEFT(COALESCE(NULLIF(BTRIM(issue ->> 'severity'), ''), 'unknown'), ${maximumQueueSortKeyLength})) AS severity,
+          LEFT(COALESCE(NULLIF(BTRIM(issue ->> 'attribute'), ''), 'unknown'), ${maximumQueueSortKeyLength}) AS attribute
+        FROM item_issues
+      ),
       item_rollup AS (
         SELECT
           id,
@@ -138,30 +170,30 @@ export async function listDashboardMerchantRemediationQueue(
           merchant_issues_json,
           details_truncated,
           COUNT(DISTINCT CASE
-            WHEN NULLIF(BTRIM(issue ->> 'code'), '') IS NOT NULL THEN CONCAT_WS(
+            WHEN code IS NOT NULL THEN CONCAT_WS(
               CHR(31),
-              BTRIM(issue ->> 'code'),
-              LOWER(COALESCE(NULLIF(BTRIM(issue ->> 'severity'), ''), 'unknown')),
-              COALESCE(NULLIF(BTRIM(issue ->> 'attribute'), ''), 'unknown')
+              code,
+              severity,
+              attribute
             )
           END)::integer AS issue_count,
           MAX(CASE
-            WHEN NULLIF(BTRIM(issue ->> 'code'), '') IS NULL THEN NULL
-            WHEN LOWER(COALESCE(NULLIF(BTRIM(issue ->> 'severity'), ''), 'unknown')) IN ('critical', 'error', 'disapproved', 'severe') THEN 3
-            WHEN LOWER(COALESCE(NULLIF(BTRIM(issue ->> 'severity'), ''), 'unknown')) = 'warning' THEN 2
+            WHEN code IS NULL THEN NULL
+            WHEN severity IN ('critical', 'error', 'disapproved', 'severe') THEN 3
+            WHEN severity = 'warning' THEN 2
             ELSE 1
           END)::integer AS priority_rank,
           BOOL_OR(
             $2::text IS NOT NULL
-            AND NULLIF(BTRIM(issue ->> 'code'), '') = $2
+            AND code = $2
           ) AS matches_issue_code,
           BOOL_OR(
             $3::text IS NOT NULL
-            AND NULLIF(BTRIM(issue ->> 'code'), '') IS NOT NULL
-            AND LOWER(COALESCE(NULLIF(BTRIM(issue ->> 'severity'), ''), 'unknown')) = $3
+            AND code IS NOT NULL
+            AND severity = $3
           ) AS matches_severity,
           LEFT(COALESCE(title, ''), ${maximumQueueSortKeyLength}) AS title_key
-        FROM item_issues
+        FROM normalized_issues
         GROUP BY id, stable_key, stable_key_key, offer_id, title, merchant_issues_json, details_truncated
       )
       SELECT
@@ -196,9 +228,9 @@ export async function listDashboardMerchantRemediationQueue(
     `,
     [
       input.incidentId,
-      input.issueCode ?? null,
-      input.severity?.toLowerCase() ?? null,
-      input.priority ?? null,
+      issueCode,
+      severity,
+      priority,
       escapedSearch,
       cursor?.priorityRank ?? null,
       cursor?.issueCount ?? null,
@@ -218,13 +250,14 @@ export async function listDashboardMerchantRemediationQueue(
     nextCursor:
       result.rows.length > limit && lastRow
         ? encodeDashboardMerchantRemediationCursor({
-            version: 1,
+            version: cursorVersion,
             sort,
             priorityRank: lastRow.priority_rank,
             issueCount: lastRow.issue_count,
             stableKey: lastRow.stable_key_key,
             titleKey: lastRow.title_key,
-            sourceItemId: lastRow.id
+            sourceItemId: lastRow.id,
+            filterFingerprint
           })
         : null
   };
@@ -238,35 +271,40 @@ export function encodeDashboardMerchantRemediationCursor(
 
 export function decodeDashboardMerchantRemediationCursor(value: string): DashboardMerchantRemediationQueueCursor {
   try {
+    if (value.length > maximumCursorLength) throw new InvalidDashboardMerchantRemediationCursorError();
     const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (!isRecord(parsed)) throw new InvalidDashboardMerchantRemediationCursorError();
     const priorityRank = parsed.priorityRank;
     const issueCount = parsed.issueCount;
     if (
-      parsed.version !== 1 ||
+      parsed.version !== cursorVersion ||
       !isSort(parsed.sort) ||
-      !isInteger(priorityRank) ||
+      !isSafeInteger(priorityRank) ||
       priorityRank < 1 ||
       priorityRank > 3 ||
-      !isInteger(issueCount) ||
+      !isSafeInteger(issueCount) ||
       issueCount < 0 ||
+      issueCount > maximumIssuesForQueueRow ||
       typeof parsed.stableKey !== "string" ||
-      parsed.stableKey.length > maximumQueueSortKeyLength ||
+      !hasAtMostCodePoints(parsed.stableKey, maximumQueueSortKeyLength) ||
       typeof parsed.titleKey !== "string" ||
-      parsed.titleKey.length > maximumQueueSortKeyLength ||
+      !hasAtMostCodePoints(parsed.titleKey, maximumQueueSortKeyLength) ||
       typeof parsed.sourceItemId !== "string" ||
-      !isUuid(parsed.sourceItemId)
+      !isUuid(parsed.sourceItemId) ||
+      typeof parsed.filterFingerprint !== "string" ||
+      !/^[0-9a-f]{64}$/i.test(parsed.filterFingerprint)
     ) {
       throw new InvalidDashboardMerchantRemediationCursorError();
     }
     return {
-      version: 1,
+      version: cursorVersion,
       sort: parsed.sort,
       priorityRank,
       issueCount,
       stableKey: parsed.stableKey,
       titleKey: parsed.titleKey,
-      sourceItemId: parsed.sourceItemId
+      sourceItemId: parsed.sourceItemId,
+      filterFingerprint: parsed.filterFingerprint
     };
   } catch (error) {
     if (error instanceof InvalidDashboardMerchantRemediationCursorError) throw error;
@@ -359,16 +397,41 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
 
+function normalizeQueueFilter(value: string | null | undefined, maximumLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().slice(0, maximumLength);
+  return normalized || null;
+}
+
+function createQueueFilterFingerprint(input: {
+  incidentId: string;
+  issueCode: string | null;
+  severity: string | null;
+  priority: MerchantIssuePriority | null;
+  search: string | null;
+  sort: DashboardMerchantRemediationSort;
+}): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
 function isSort(value: unknown): value is DashboardMerchantRemediationSort {
   return value === "priority" || value === "issue_count" || value === "stable_key" || value === "title";
 }
 
-function isInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value);
-}
-
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isPriority(value: unknown): value is MerchantIssuePriority {
+  return value === "critical" || value === "high" || value === "normal";
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function hasAtMostCodePoints(value: string, maximumLength: number): boolean {
+  return [...value].length <= maximumLength;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
