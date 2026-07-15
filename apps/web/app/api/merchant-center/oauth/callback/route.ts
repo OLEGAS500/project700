@@ -6,9 +6,9 @@ import {
 } from "@eim/core";
 import {
   consumeMerchantCenterOAuthState,
+  completeMerchantCenterOAuthAuthorization,
   hashMerchantCenterOAuthState,
   MerchantCenterOAuthStateInvalidError,
-  upsertMerchantCenterOAuthCredentials
 } from "@eim/db";
 import { NextResponse } from "next/server";
 
@@ -23,8 +23,9 @@ export async function GET(request: Request) {
   }
 
   let stateRecord;
+  const stateHash = hashMerchantCenterOAuthState(state);
   try {
-    stateRecord = await consumeMerchantCenterOAuthState(hashMerchantCenterOAuthState(state));
+    stateRecord = await consumeMerchantCenterOAuthState(stateHash);
   } catch (error) {
     if (error instanceof MerchantCenterOAuthStateInvalidError) {
       return NextResponse.json({ error: "Invalid or expired Merchant Center OAuth state" }, { status: 400 });
@@ -57,7 +58,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const credentials = await upsertMerchantCenterOAuthCredentials(stateRecord.storeId, {
+    const credentials = await completeMerchantCenterOAuthAuthorization(stateHash, {
       accessToken: tokenResponse.access_token,
       refreshToken,
       tokenType: tokenResponse.token_type ?? "Bearer",
@@ -78,6 +79,12 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: providerErrorMessage(error.code) },
         { status: 502 }
+      );
+    }
+    if (error instanceof MerchantCenterOAuthStateInvalidError) {
+      return NextResponse.json(
+        { error: "Merchant Center authorization is no longer valid" },
+        { status: 409 }
       );
     }
     return unavailableResponse();

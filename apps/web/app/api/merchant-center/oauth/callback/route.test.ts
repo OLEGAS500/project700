@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
   consumeMerchantCenterOAuthState: vi.fn(),
+  completeMerchantCenterOAuthAuthorization: vi.fn(),
   hashMerchantCenterOAuthState: vi.fn(() => "hashed-state"),
-  upsertMerchantCenterOAuthCredentials: vi.fn(),
   MerchantCenterOAuthStateInvalidError: class MerchantCenterOAuthStateInvalidError extends Error {}
 }));
 
@@ -16,8 +16,8 @@ const storeId = "70000000-0000-4000-8000-000000000001";
 describe("Merchant Center OAuth callback API", () => {
   beforeEach(() => {
     database.consumeMerchantCenterOAuthState.mockReset();
+    database.completeMerchantCenterOAuthAuthorization.mockReset();
     database.hashMerchantCenterOAuthState.mockClear();
-    database.upsertMerchantCenterOAuthCredentials.mockReset();
     vi.stubEnv("GOOGLE_MERCHANT_CENTER_CLIENT_ID", "client-id");
     vi.stubEnv("GOOGLE_MERCHANT_CENTER_CLIENT_SECRET", "client-secret");
     vi.stubEnv("GOOGLE_MERCHANT_CENTER_REDIRECT_URI", "https://app.example.com/oauth/callback");
@@ -45,7 +45,7 @@ describe("Merchant Center OAuth callback API", () => {
       redirectUri: "https://app.example.com/oauth/callback",
       expiresAt: new Date(Date.now() + 60_000).toISOString()
     });
-    database.upsertMerchantCenterOAuthCredentials.mockResolvedValue({
+    database.completeMerchantCenterOAuthAuthorization.mockResolvedValue({
       storeId,
       hasAccessToken: true,
       hasRefreshToken: true,
@@ -69,13 +69,34 @@ describe("Merchant Center OAuth callback API", () => {
     expect(JSON.stringify(body)).not.toContain("access-secret");
     expect(JSON.stringify(body)).not.toContain("refresh-secret");
     expect(database.consumeMerchantCenterOAuthState).toHaveBeenCalledWith("hashed-state");
-    expect(database.upsertMerchantCenterOAuthCredentials).toHaveBeenCalledWith(
-      storeId,
+    expect(database.completeMerchantCenterOAuthAuthorization).toHaveBeenCalledWith(
+      "hashed-state",
       expect.objectContaining({
         accessToken: "access-secret",
         refreshToken: "refresh-secret"
       })
     );
+  });
+
+  it("rejects a completion invalidated by disconnect without exposing credentials", async () => {
+    database.consumeMerchantCenterOAuthState.mockResolvedValue({
+      storeId,
+      redirectUri: "https://app.example.com/oauth/callback",
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    database.completeMerchantCenterOAuthAuthorization.mockRejectedValue(
+      new database.MerchantCenterOAuthStateInvalidError()
+    );
+
+    const response = await GET(
+      new Request("https://app.example.com/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.text();
+    expect(body).toContain("Merchant Center authorization is no longer valid");
+    expect(body).not.toContain("access-secret");
+    expect(body).not.toContain("refresh-secret");
   });
 
   it("rejects replayed state and provider failures safely", async () => {

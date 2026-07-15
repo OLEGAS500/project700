@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type pg from "pg";
-import { getPool } from "./client";
+import { getPool, withTransaction } from "./client";
 import { MerchantCenterStoreNotFoundError } from "./merchant-center";
 
 const cipherAlgorithm = "aes-256-gcm";
@@ -216,6 +216,44 @@ export async function upsertMerchantCenterOAuthCredentials(
   storeId: string,
   input: UpsertMerchantCenterOAuthCredentialsInput,
   executor: pg.Pool | pg.PoolClient = getPool()
+): Promise<MerchantCenterOAuthCredentialRecord> {
+  return upsertMerchantCenterOAuthCredentialsWithExecutor(storeId, input, executor);
+}
+
+export async function completeMerchantCenterOAuthAuthorization(
+  stateHash: string,
+  input: UpsertMerchantCenterOAuthCredentialsInput
+): Promise<MerchantCenterOAuthCredentialRecord> {
+  return withTransaction(async (client) => {
+    const state = await client.query<{ store_id: string }>(
+      `
+        SELECT store_id
+        FROM merchant_center_oauth_states
+        WHERE state_hash = $1 AND consumed_at IS NOT NULL
+        FOR UPDATE
+      `,
+      [stateHash]
+    );
+
+    const stateRow = state.rows[0];
+    if (!stateRow) {
+      throw new MerchantCenterOAuthStateInvalidError();
+    }
+
+    const credentials = await upsertMerchantCenterOAuthCredentialsWithExecutor(
+      stateRow.store_id,
+      input,
+      client
+    );
+    await client.query("DELETE FROM merchant_center_oauth_states WHERE state_hash = $1", [stateHash]);
+    return credentials;
+  });
+}
+
+async function upsertMerchantCenterOAuthCredentialsWithExecutor(
+  storeId: string,
+  input: UpsertMerchantCenterOAuthCredentialsInput,
+  executor: pg.Pool | pg.PoolClient
 ): Promise<MerchantCenterOAuthCredentialRecord> {
   const encryptedAccessToken = encryptSecret(input.accessToken);
   const encryptedRefreshToken = encryptSecret(input.refreshToken);
