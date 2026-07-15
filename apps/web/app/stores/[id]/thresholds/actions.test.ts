@@ -34,7 +34,7 @@ describe("threshold server action", () => {
     expect(database.updateStoreThresholds).not.toHaveBeenCalled();
   });
 
-  it("converts displayed percentages and saves the existing threshold contract", async () => {
+  it("round-trips precise and non-default displayed values through the existing contract", async () => {
     database.updateStoreThresholds.mockResolvedValue({});
 
     await expect(
@@ -42,14 +42,14 @@ describe("threshold server action", () => {
         storeId,
         initialState,
         formData({
-          catalogDropPercentage: "25",
+          catalogDropPercentage: "12.345",
           catalogDropAbsolute: "30",
           sourceDivergencePercentage: "12.5",
           sourceDivergenceAbsolute: "24",
-          priceMismatchAbsolute: "0.05",
-          priceMismatchRelative: "0.2",
+          priceMismatchAbsolute: "0.005",
+          priceMismatchRelative: "150",
           minimumMismatchCount: "7",
-          minimumMismatchRatio: "30",
+          minimumMismatchRatio: "33.333",
           seoCoverageMinimum: "85",
           sourceHealthConsecutiveFailures: "3"
         })
@@ -57,13 +57,13 @@ describe("threshold server action", () => {
     ).rejects.toThrow(`NEXT_REDIRECT:/stores/${storeId}/thresholds`);
 
     expect(database.updateStoreThresholds).toHaveBeenCalledWith(storeId, {
-      catalogDropPercentage: 0.25,
+      catalogDropPercentage: 0.12345,
       catalogDropAbsolute: 30,
       sourceDivergencePercentage: 0.125,
       sourceDivergenceAbsolute: 24,
-      priceMismatchTolerance: { absolute: 0.05, relative: 0.002 },
+      priceMismatchTolerance: { absolute: 0.005, relative: 1.5 },
       minimumMismatchCount: 7,
-      minimumMismatchRatio: 0.3,
+      minimumMismatchRatio: 0.33333,
       seoCoverageMinimum: 0.85,
       sourceHealthConsecutiveFailures: 3
     });

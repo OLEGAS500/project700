@@ -24,7 +24,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             defaultValue={asPercentage(thresholds.catalogDropPercentage)}
             min="0"
             max="100"
-            step="0.1"
+            step="any"
             suffix="%"
           />
           <ThresholdNumberField
@@ -47,7 +47,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             defaultValue={asPercentage(thresholds.sourceDivergencePercentage)}
             min="0"
             max="100"
-            step="0.1"
+            step="any"
             suffix="%"
           />
           <ThresholdNumberField
@@ -69,7 +69,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             label="Price absolute tolerance"
             defaultValue={thresholds.priceMismatchTolerance.absolute}
             min="0"
-            step="0.01"
+            step="any"
             suffix="currency units"
           />
           <ThresholdNumberField
@@ -77,8 +77,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             label="Price relative tolerance"
             defaultValue={asPercentage(thresholds.priceMismatchTolerance.relative)}
             min="0"
-            max="100"
-            step="0.01"
+            step="any"
             suffix="%"
           />
           <ThresholdNumberField
@@ -95,7 +94,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             defaultValue={asPercentage(thresholds.minimumMismatchRatio)}
             min="0"
             max="100"
-            step="0.1"
+            step="any"
             suffix="%"
           />
         </div>
@@ -110,7 +109,7 @@ export default function ThresholdsForm({ storeId, thresholds }: { storeId: strin
             defaultValue={asPercentage(thresholds.seoCoverageMinimum)}
             min="0"
             max="100"
-            step="0.1"
+            step="any"
             suffix="%"
           />
           <ThresholdNumberField
@@ -143,7 +142,7 @@ function ThresholdNumberField({
 }: {
   name: string;
   label: string;
-  defaultValue: number;
+  defaultValue: number | string;
   min: string;
   max?: string;
   step: string;
@@ -173,6 +172,34 @@ function SaveButton() {
   return <button type="submit" disabled={pending}>{pending ? "Saving..." : "Save thresholds"}</button>;
 }
 
-function asPercentage(value: number): number {
-  return value * 100;
+function asPercentage(value: number): string {
+  if (!Number.isFinite(value)) return "";
+
+  return shiftDecimal(value.toString(), 2) ?? "";
+}
+
+function shiftDecimal(raw: string, shift: number): string | null {
+  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i);
+  if (!match) return null;
+
+  const [, sign, integerPart, fractionPart = "", exponentText] = match;
+  const exponent = Number(exponentText ?? 0);
+  const digits = integerPart + fractionPart;
+  const decimalIndex = integerPart.length + exponent + shift;
+
+  if (decimalIndex <= 0) {
+    return `${sign === "-" ? "-" : ""}0.${"0".repeat(-decimalIndex)}${digits}`;
+  }
+  if (decimalIndex >= digits.length) {
+    return `${sign === "-" ? "-" : ""}${trimLeadingZeros(`${digits}${"0".repeat(decimalIndex - digits.length)}`)}`;
+  }
+
+  return `${sign === "-" ? "-" : ""}${trimLeadingZeros(`${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`)}`;
+}
+
+function trimLeadingZeros(value: string): string {
+  if (!value.includes(".")) return value.replace(/^0+(?=\d)/, "");
+
+  const [integerPart, fractionPart] = value.split(".");
+  return `${integerPart.replace(/^0+(?=\d)/, "")}.${fractionPart}`;
 }
