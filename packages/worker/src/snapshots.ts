@@ -30,6 +30,7 @@ import { collectFeed } from "./sources/feed";
 import { collectProductPage } from "./sources/product-page";
 import { collectSitemap } from "./sources/sitemap";
 import { buildSourceMatches } from "./source-matching";
+import { collectMerchantCenterProductStatuses } from "./merchant-center-status";
 
 export type SnapshotJob = {
   snapshotId: string;
@@ -123,6 +124,10 @@ export async function runSourceSnapshotForStore(storeId: string): Promise<{
   status: "queued" | "running" | "completed" | "partial" | "failed";
   sitemapUrlCount: number | null;
   feedProductCount: number | null;
+  merchantTotalCount: number | null;
+  merchantApprovedCount: number | null;
+  merchantPendingCount: number | null;
+  merchantDisapprovedCount: number | null;
 }> {
   const queued =
     (await getLatestQueuedSnapshotForStore(storeId)) ??
@@ -147,6 +152,19 @@ export async function runSourceSnapshotForStore(storeId: string): Promise<{
     url: store.feedUrl
   });
   let snapshot = await persistFeedCheckResult(queued.id, store.id, feedResult);
+
+  if (store.merchantCenterAccountId) {
+    const merchantStatusResult = await collectMerchantCenterProductStatuses({
+      storeId: store.id,
+      accountId: store.merchantCenterAccountId
+    });
+    snapshot = await persistSourceCheckResult(
+      queued.id,
+      store.id,
+      merchantStatusResult
+    );
+  }
+
   const categories = await listMonitoredCategories(store.id);
 
   for (const category of categories) {
@@ -212,7 +230,11 @@ export async function runSourceSnapshotForStore(storeId: string): Promise<{
     snapshotId: snapshot.id,
     status: snapshot.status,
     sitemapUrlCount: snapshot.sitemapUrlCount,
-    feedProductCount: snapshot.feedProductCount
+    feedProductCount: snapshot.feedProductCount,
+    merchantTotalCount: snapshot.merchantTotalCount,
+    merchantApprovedCount: snapshot.merchantApprovedCount,
+    merchantPendingCount: snapshot.merchantPendingCount,
+    merchantDisapprovedCount: snapshot.merchantDisapprovedCount
   };
 }
 

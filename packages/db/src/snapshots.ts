@@ -2,6 +2,13 @@ import type { BaselineRole, SourceCheckResult } from "@eim/core";
 import type pg from "pg";
 import { getPool, withTransaction } from "./client";
 
+type MerchantStatusCounts = {
+  total: number;
+  approved: number;
+  pending: number;
+  disapproved: number;
+};
+
 type SnapshotRow = {
   id: string;
   store_id: string;
@@ -9,6 +16,10 @@ type SnapshotRow = {
   baseline_role: BaselineRole;
   sitemap_url_count: number | null;
   feed_product_count: number | null;
+  merchant_total_count: number | null;
+  merchant_approved_count: number | null;
+  merchant_pending_count: number | null;
+  merchant_disapproved_count: number | null;
   created_at: Date;
 };
 
@@ -19,6 +30,10 @@ export type SnapshotRecord = {
   baselineRole: BaselineRole;
   sitemapUrlCount: number | null;
   feedProductCount: number | null;
+  merchantTotalCount: number | null;
+  merchantApprovedCount: number | null;
+  merchantPendingCount: number | null;
+  merchantDisapprovedCount: number | null;
   createdAt: string;
 };
 
@@ -27,6 +42,7 @@ export type SnapshotStore = {
   domain: string;
   sitemapUrl: string;
   feedUrl: string;
+  merchantCenterAccountId: string | null;
 };
 
 function mapSnapshot(row: SnapshotRow): SnapshotRecord {
@@ -37,6 +53,10 @@ function mapSnapshot(row: SnapshotRow): SnapshotRecord {
     baselineRole: row.baseline_role,
     sitemapUrlCount: row.sitemap_url_count,
     feedProductCount: row.feed_product_count,
+    merchantTotalCount: row.merchant_total_count,
+    merchantApprovedCount: row.merchant_approved_count,
+    merchantPendingCount: row.merchant_pending_count,
+    merchantDisapprovedCount: row.merchant_disapproved_count,
     createdAt: row.created_at.toISOString()
   };
 }
@@ -85,9 +105,15 @@ export async function getSnapshotStore(snapshotId: string): Promise<SnapshotStor
     domain: string;
     sitemap_url: string;
     feed_url: string;
+    merchant_center_account_id: string | null;
   }>(
     `
-      SELECT stores.id, stores.domain, stores.sitemap_url, stores.feed_url
+      SELECT
+        stores.id,
+        stores.domain,
+        stores.sitemap_url,
+        stores.feed_url,
+        stores.merchant_center_account_id
       FROM snapshots
       JOIN stores ON stores.id = snapshots.store_id
       WHERE snapshots.id = $1
@@ -105,7 +131,8 @@ export async function getSnapshotStore(snapshotId: string): Promise<SnapshotStor
     id: row.id,
     domain: row.domain,
     sitemapUrl: row.sitemap_url,
-    feedUrl: row.feed_url
+    feedUrl: row.feed_url,
+    merchantCenterAccountId: row.merchant_center_account_id
   };
 }
 
@@ -262,61 +289,56 @@ export async function persistSourceCheckResult(
       );
     }
 
-    const countColumn =
+    const merchantCounts =
+      result.source === "merchant_center" ? readMerchantStatusCounts(result.metadata) : null;
+    const countAssignment =
       result.source === "sitemap"
-        ? "sitemap_url_count"
+        ? "sitemap_url_count = $2"
         : result.source === "feed"
-          ? "feed_product_count"
-          : null;
+          ? "feed_product_count = $2"
+          : merchantCounts
+            ? `
+              merchant_total_count = $2,
+              merchant_approved_count = $3,
+              merchant_pending_count = $4,
+              merchant_disapproved_count = $5
+            `
+            : "";
+    const countValues = merchantCounts
+      ? [
+          merchantCounts.total,
+          merchantCounts.approved,
+          merchantCounts.pending,
+          merchantCounts.disapproved
+        ]
+      : result.source === "sitemap" || result.source === "feed"
+        ? [result.itemsObserved]
+        : [];
 
-    const updated = countColumn
-      ? await client.query<SnapshotRow>(
-          `
-            WITH status_rollup AS (
-              SELECT
-                bool_and(status = 'success') AS all_success,
-                count(*) FILTER (WHERE status IN ('success', 'partial')) AS useful_checks
-              FROM source_checks
-              WHERE snapshot_id = $1
-            )
-            UPDATE snapshots
-            SET
-              status = CASE
-                WHEN status_rollup.all_success THEN 'completed'::snapshot_status
-                WHEN status_rollup.useful_checks > 0 THEN 'partial'::snapshot_status
-                ELSE 'failed'::snapshot_status
-              END,
-              finished_at = now(),
-              ${countColumn} = $2
-            FROM status_rollup
-            WHERE snapshots.id = $1
-            RETURNING *
-          `,
-          [snapshotId, result.itemsObserved]
+    const updated = await client.query<SnapshotRow>(
+      `
+        WITH status_rollup AS (
+          SELECT
+            bool_and(status = 'success') AS all_success,
+            count(*) FILTER (WHERE status IN ('success', 'partial')) AS useful_checks
+          FROM source_checks
+          WHERE snapshot_id = $1
         )
-      : await client.query<SnapshotRow>(
-          `
-            WITH status_rollup AS (
-              SELECT
-                bool_and(status = 'success') AS all_success,
-                count(*) FILTER (WHERE status IN ('success', 'partial')) AS useful_checks
-              FROM source_checks
-              WHERE snapshot_id = $1
-            )
-            UPDATE snapshots
-            SET
-              status = CASE
-                WHEN status_rollup.all_success THEN 'completed'::snapshot_status
-                WHEN status_rollup.useful_checks > 0 THEN 'partial'::snapshot_status
-                ELSE 'failed'::snapshot_status
-              END,
-              finished_at = now()
-            FROM status_rollup
-            WHERE snapshots.id = $1
-            RETURNING *
-          `,
-          [snapshotId]
-        );
+        UPDATE snapshots
+        SET
+          status = CASE
+            WHEN status_rollup.all_success THEN 'completed'::snapshot_status
+            WHEN status_rollup.useful_checks > 0 THEN 'partial'::snapshot_status
+            ELSE 'failed'::snapshot_status
+          END,
+          finished_at = now()
+          ${countAssignment ? `, ${countAssignment}` : ""}
+        FROM status_rollup
+        WHERE snapshots.id = $1
+        RETURNING *
+      `,
+      [snapshotId, ...countValues]
+    );
 
     return mapSnapshot(updated.rows[0]);
   });
@@ -324,6 +346,36 @@ export async function persistSourceCheckResult(
 
 export const persistSitemapCheckResult = persistSourceCheckResult;
 export const persistFeedCheckResult = persistSourceCheckResult;
+
+function readMerchantStatusCounts(
+  metadata: Record<string, unknown> | undefined
+): MerchantStatusCounts | null {
+  if (!metadata || !isRecord(metadata.merchantStatusCounts)) {
+    return null;
+  }
+
+  const counts = metadata.merchantStatusCounts;
+  const total = readNonNegativeInteger(counts.total);
+  const approved = readNonNegativeInteger(counts.approved);
+  const pending = readNonNegativeInteger(counts.pending);
+  const disapproved = readNonNegativeInteger(counts.disapproved);
+
+  if (
+    total === null ||
+    approved === null ||
+    pending === null ||
+    disapproved === null ||
+    total !== approved + pending + disapproved
+  ) {
+    return null;
+  }
+
+  return { total, approved, pending, disapproved };
+}
+
+function readNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
 
 async function getMergedSourceItemMetadata(
   client: pg.PoolClient,
