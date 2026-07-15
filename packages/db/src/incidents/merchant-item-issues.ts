@@ -691,8 +691,10 @@ function isCriticalIssueSeverity(value: string): boolean {
 }
 
 function boundedText(value: unknown): string | null {
-  return typeof value === "string" && value.trim()
-    ? value.trim().slice(0, maximumIssueTextLength)
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized
+    ? [...normalized].slice(0, maximumIssueTextLength).join("")
     : null;
 }
 
