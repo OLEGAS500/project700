@@ -1,0 +1,82 @@
+# Merchant remediation queue visual QA
+
+This checklist is a manual release gate for the read-only Merchant remediation queue. It validates seeded UI behavior after the code and PostgreSQL checks have passed. It does not replace the separate real Merchant API staging smoke.
+
+## Scope and evidence
+
+- Target route: `/incidents/<MERCHANT_ITEM_ISSUES_INCIDENT_ID>`.
+- Test a disposable store and incident only. Do not use a production customer or provider account.
+- Record the tested commit, CI run, browser, viewport, database fixture identifier, and screenshot paths.
+- Keep screenshots free of tokens, private recipients, provider request URLs, and raw provider responses.
+- Incident lifecycle controls may appear in the detail header; this checklist verifies that the remediation queue itself has no product remediation or provider write controls.
+
+Suggested evidence record:
+
+```text
+Commit:
+CI run:
+Browser:
+Desktop viewport:
+Mobile viewport:
+Fixture:
+Screenshots:
+Result:
+```
+
+## Seeded fixture
+
+Create one Merchant item-issues incident from an immutable opened snapshot containing:
+
+- More than 50 affected products so the queue has at least two keyset pages.
+- Critical, high, and normal-priority issues.
+- Multiple issue codes and severities for filter options.
+- Long titles, offer IDs, and stable keys, including Unicode and emoji.
+- Issue codes longer than 256 characters and two codes sharing the same bounded prefix.
+- Attributes at the 256-code-point boundary, including an emoji before the final distinguishing character.
+- A bounded or malformed nested issue sample that should display a truncation/limited-details indicator.
+- A second store with unrelated Merchant data to verify isolation.
+- A separate incident or filter combination that produces an empty queue.
+
+The fixture must be persisted before opening the incident. Later snapshots must not add products to this queue.
+
+## Desktop checks
+
+Use a desktop viewport such as `1440x900`.
+
+- [ ] The incident detail loads without a framework error or horizontal page overflow.
+- [ ] Triage totals, issue groups, priority products, and queue rows are readable and visually aligned.
+- [ ] Long titles, offer IDs, stable keys, issue codes, attributes, and Unicode remain contained or wrap without overlapping adjacent content.
+- [ ] The queue shows only the bounded fields: priority, product/title, stable key, offer ID, issue codes, and issue count.
+- [ ] No provider descriptions, documentation URLs, raw JSON, tokens, request URLs, or remediation/provider actions appear in the queue.
+- [ ] Critical, high, and normal priority values are visually distinguishable and ordered correctly for the selected sort.
+- [ ] The issue-code link opens the queue with that issue code selected and preserves the incident scope.
+- [ ] Search matches offer ID, stable key, and title using literal text; special characters do not behave like wildcard syntax.
+- [ ] Issue code, severity, priority, and search filters work individually and in combinations.
+- [ ] Reset and active-filter links remove only the intended filter and clear the old cursor.
+- [ ] Each sort option works: priority, issue count, stable key, and title.
+- [ ] `Next page` preserves all active filters and sort order and shows the next non-overlapping page.
+- [ ] Repeated navigation across several pages remains deterministic and does not duplicate or skip visible rows.
+- [ ] Manually appending a malformed or oversized `cursor` shows `Invalid remediation filter` without a database diagnostic.
+- [ ] Switching a filter while retaining an old cursor is rejected safely rather than silently skipping matching products.
+- [ ] Bounded triage data displays an explicit limited-details/truncation message at the relevant layer.
+
+## Mobile checks
+
+Use a mobile viewport such as `390x844`.
+
+- [ ] Header, incident facts, filters, active-filter links, tables, and pagination fit the viewport without incoherent overlap.
+- [ ] Tables scroll within their own regions when necessary; the page itself does not acquire unexplained horizontal overflow.
+- [ ] Long Unicode values wrap or remain inspectable without changing row structure.
+- [ ] Filter controls and `Next page` remain reachable and readable after keyboard focus or browser zoom.
+- [ ] Empty, read-failure, invalid-cursor, and truncation states remain readable on mobile.
+
+## Empty and isolation checks
+
+- [ ] A valid incident with no matching products shows `No products match the current remediation filters.`.
+- [ ] A different store's products never appear in the target incident queue.
+- [ ] A later Merchant snapshot for the same store does not change the queue sourced from `opened_snapshot_id`.
+- [ ] No provider call is made by the page; browser network activity contains only application navigation/data requests.
+
+## Sign-off
+
+Attach screenshots for the normal desktop and mobile states, long-value state, filtered state, second-page state, empty state, invalid-cursor state, and bounded/truncated state. Mark this gate complete only after every checkbox passes and the evidence record is attached to the release or pull request. The separate Merchant API staging smoke must still pass before Milestone 9.7 receives full operational sign-off.
