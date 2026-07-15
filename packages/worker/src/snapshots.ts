@@ -22,6 +22,7 @@ import {
   persistSampleManifest,
   persistFeedCheckResult,
   persistSourceCheckResult,
+  persistMerchantCenterItemIssuesResult,
   persistSitemapCheckResult,
   replaceSourceMatches
 } from "@eim/db";
@@ -31,6 +32,7 @@ import { collectProductPage } from "./sources/product-page";
 import { collectSitemap } from "./sources/sitemap";
 import { buildSourceMatches } from "./source-matching";
 import { collectMerchantCenterProductStatuses } from "./merchant-center-status";
+import { collectMerchantCenterItemIssues } from "./merchant-center-item-issues";
 
 export type SnapshotJob = {
   snapshotId: string;
@@ -162,6 +164,16 @@ export async function runSourceSnapshotForStore(storeId: string): Promise<{
       queued.id,
       store.id,
       merchantStatusResult
+    );
+
+    const merchantItemIssuesResult = await collectMerchantCenterItemIssues({
+      storeId: store.id,
+      accountId: store.merchantCenterAccountId
+    });
+    snapshot = await persistMerchantCenterItemIssuesResult(
+      queued.id,
+      store.id,
+      merchantItemIssuesResult
     );
   }
 

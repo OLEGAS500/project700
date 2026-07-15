@@ -97,10 +97,7 @@ export async function collectMerchantCenterProductStatuses(
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = normalizeTimeout(input.timeoutMs);
   const limits = normalizeLimits(input.limits);
-  const dependencies = {
-    ...defaultDependencies,
-    ...input.dependencies
-  };
+  const dependencies = createMerchantCenterStatusDependencies(input.dependencies);
   const endpoint = buildMerchantStatusEndpoint(input.accountId);
 
   if (!input.accountId) {
@@ -111,7 +108,7 @@ export async function collectMerchantCenterProductStatuses(
     });
   }
 
-  const access = await resolveAccessToken({
+  const access = await resolveMerchantCenterAccessToken({
     storeId: input.storeId,
     fetchImpl,
     now,
@@ -169,7 +166,7 @@ export async function runMerchantCenterStatusSnapshotForStore(storeId: string): 
   };
 }
 
-type AccessTokenResolution =
+export type MerchantCenterAccessTokenResolution =
   | { accessToken: string }
   | {
       status: "authentication_failed" | "source_unavailable";
@@ -178,12 +175,21 @@ type AccessTokenResolution =
       httpStatus?: number;
     };
 
-async function resolveAccessToken(input: {
+export function createMerchantCenterStatusDependencies(
+  overrides: Partial<MerchantCenterStatusDependencies> = {}
+): MerchantCenterStatusDependencies {
+  return {
+    ...defaultDependencies,
+    ...overrides
+  };
+}
+
+export async function resolveMerchantCenterAccessToken(input: {
   storeId: string;
   fetchImpl: MerchantCenterOAuthFetch;
   now: () => Date;
   dependencies: MerchantCenterStatusDependencies;
-}): Promise<AccessTokenResolution> {
+}): Promise<MerchantCenterAccessTokenResolution> {
   let current: MerchantCenterOAuthTokenSet;
 
   try {
