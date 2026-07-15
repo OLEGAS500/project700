@@ -6,7 +6,12 @@ const database = vi.hoisted(() => ({
   getDashboardIncidentDetail: vi.fn()
 }));
 
+const navigation = vi.hoisted(() => ({
+  notFound: vi.fn()
+}));
+
 vi.mock("@eim/db", () => database);
+vi.mock("next/navigation", () => navigation);
 
 import IncidentDetailPage from "./page";
 
@@ -15,6 +20,7 @@ const incidentId = "70000000-0000-4000-8000-000000000001";
 describe("incident detail page", () => {
   beforeEach(() => {
     database.getDashboardIncidentDetail.mockReset();
+    navigation.notFound.mockReset();
   });
 
   it("rejects an invalid id without reading the database", async () => {
@@ -24,13 +30,15 @@ describe("incident detail page", () => {
     expect(html).toContain("Invalid incident link");
   });
 
-  it("renders a not-found state for an unknown incident", async () => {
+  it("signals a real Next.js not-found transition for an unknown incident", async () => {
     database.getDashboardIncidentDetail.mockResolvedValue(null);
+    navigation.notFound.mockImplementation(() => {
+      throw new Error("NEXT_NOT_FOUND");
+    });
 
-    const html = await renderPage(incidentId);
-
+    await expect(renderPage(incidentId)).rejects.toThrow("NEXT_NOT_FOUND");
     expect(database.getDashboardIncidentDetail).toHaveBeenCalledWith(incidentId);
-    expect(html).toContain("Incident not found");
+    expect(navigation.notFound).toHaveBeenCalledOnce();
   });
 
   it("renders safe source-health detail without leaking evidence metadata", async () => {

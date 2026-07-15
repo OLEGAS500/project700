@@ -1,6 +1,7 @@
 import { getDashboardIncidentDetail } from "@eim/db";
 import type { DashboardIncidentDetail } from "@eim/db";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import {
@@ -53,7 +54,7 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
   if (readFailed) return <DetailState kind="failure" />;
 
   if (!detail) {
-    return <DetailState kind="not-found" />;
+    notFound();
   }
 
   const { incident, store } = detail;
@@ -106,17 +107,12 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
   );
 }
 
-function DetailState({ kind }: { kind: "invalid" | "not-found" | "failure" }) {
+function DetailState({ kind }: { kind: "invalid" | "failure" }) {
   const content = {
     invalid: {
       title: "Invalid incident link",
       message: "This incident identifier is not valid.",
       className: "incident-state-warning"
-    },
-    "not-found": {
-      title: "Incident not found",
-      message: "This incident may have been removed or the link is no longer current.",
-      className: ""
     },
     failure: {
       title: "Incident data is unavailable",
