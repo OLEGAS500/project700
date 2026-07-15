@@ -161,7 +161,7 @@ describeIfDatabase("postgres smoke", () => {
 
     expect(Number(counts.rows[0].stores)).toBe(1);
     expect(Number(counts.rows[0].categories)).toBe(2);
-    expect(Number(counts.rows[0].alert_preferences)).toBe(5);
+    expect(Number(counts.rows[0].alert_preferences)).toBe(6);
     expect(Number(counts.rows[0].store_alert_preferences)).toBe(1);
     expect(Number(counts.rows[0].snapshots)).toBe(1);
 

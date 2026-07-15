@@ -62,7 +62,8 @@ export const incidentTypeSchema = z.enum([
   "source_divergence",
   "seo_regression",
   "price_availability_mismatch",
-  "source_health"
+  "source_health",
+  "merchant_item_issues"
 ]);
 
 export const incidentLikelySourceSchema = z.enum([

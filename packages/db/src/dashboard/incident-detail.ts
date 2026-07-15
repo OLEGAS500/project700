@@ -80,6 +80,10 @@ export type DashboardIncidentDetail = {
     offerId: string | null;
     title: string | null;
     url: string | null;
+    issueCode?: string | null;
+    issueSeverity?: string | null;
+    affectedAttribute?: string | null;
+    reportingContext?: string | null;
   }>;
   comments: Array<{
     id: string;
@@ -236,9 +240,15 @@ function normalizeSamples(value: unknown): DashboardIncidentDetail["samples"] {
       stableKey: nullableText(item.stableKey) ?? nullableText(item.stable_key),
       offerId: nullableText(item.offerId) ?? nullableText(item.offer_id),
       title: nullableText(item.title),
-      url: nullableText(item.url)
+      url: nullableText(item.url),
+      issueCode: nullableText(item.issueCode) ?? nullableText(item.issue_code),
+      issueSeverity: nullableText(item.issueSeverity) ?? nullableText(item.issue_severity),
+      affectedAttribute: nullableText(item.affectedAttribute) ?? nullableText(item.affected_attribute),
+      reportingContext: nullableText(item.reportingContext) ?? nullableText(item.reporting_context)
     };
-    return sample.stableKey || sample.offerId || sample.title || sample.url ? [sample] : [];
+    return sample.stableKey || sample.offerId || sample.title || sample.url || sample.issueCode
+      ? [sample]
+      : [];
   });
 }
 

@@ -156,7 +156,8 @@ function incidentTypeLabel(type: CanonicalAlertPayload["incident"]["type"]): str
     source_divergence: "Storefront and feed divergence",
     seo_regression: "SEO regression",
     price_availability_mismatch: "Product data mismatch",
-    source_health: "Feed monitoring failure"
+    source_health: "Feed monitoring failure",
+    merchant_item_issues: "Merchant Center item issues"
   };
   return labels[type];
 }
