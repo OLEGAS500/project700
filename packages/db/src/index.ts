@@ -9,6 +9,7 @@ export * from "./email-destinations";
 export * from "./incidents";
 export * from "./maintenance-windows";
 export * from "./merchant-center";
+export * from "./merchant-center-oauth";
 export * from "./migrations";
 export * from "./snapshots";
 export * from "./stores";

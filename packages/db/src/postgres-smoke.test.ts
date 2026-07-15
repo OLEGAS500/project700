@@ -34,6 +34,18 @@ import {
   getMerchantCenterConnection,
   MerchantCenterStoreNotFoundError
 } from "./merchant-center";
+import {
+  claimMerchantCenterOAuthRefresh,
+  completeMerchantCenterOAuthAuthorization,
+  completeMerchantCenterOAuthRefresh,
+  consumeMerchantCenterOAuthState,
+  createMerchantCenterOAuthState,
+  getMerchantCenterOAuthCredentials,
+  getMerchantCenterOAuthStatus,
+  MerchantCenterOAuthCredentialLeaseLostError,
+  MerchantCenterOAuthRefreshInProgressError,
+  MerchantCenterOAuthStateInvalidError
+} from "./merchant-center-oauth";
 import { applyMigrations } from "./migrations";
 import {
   acknowledgeIncident,
@@ -181,7 +193,8 @@ describeIfDatabase("postgres smoke", () => {
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
-      "0007_dashboard_read_models.sql"
+      "0007_dashboard_read_models.sql",
+      "0008_merchant_center_oauth.sql"
     ]);
     expect(migrations.rows.map((migration) => migration.name)).toEqual([
       "0001_initial.sql",
@@ -190,7 +203,8 @@ describeIfDatabase("postgres smoke", () => {
       "0004_telegram_destinations.sql",
       "0005_email_destinations.sql",
       "0006_alert_payload_versions.sql",
-      "0007_dashboard_read_models.sql"
+      "0007_dashboard_read_models.sql",
+      "0008_merchant_center_oauth.sql"
     ]);
     expect(migrations.rows.every((migration) => migration.checksum.length === 64)).toBe(true);
   });
@@ -264,6 +278,184 @@ describeIfDatabase("postgres smoke", () => {
         merchantCenterAccountId: "123456789"
       })
     ).rejects.toBeInstanceOf(MerchantCenterStoreNotFoundError);
+  });
+
+  it("stores encrypted OAuth credentials, consumes state once, and fences refresh", async () => {
+    const previousEncryptionKey = process.env.MERCHANT_CENTER_CREDENTIALS_ENCRYPTION_KEY;
+    process.env.MERCHANT_CENTER_CREDENTIALS_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+
+    try {
+      const created = await createStore({
+        name: "Merchant OAuth Store",
+        domain: "https://merchant-oauth.example.com",
+        sitemapUrl: "https://merchant-oauth.example.com/sitemap.xml",
+        feedUrl: "https://merchant-oauth.example.com/feed.xml",
+        categoryUrls: ["https://merchant-oauth.example.com/collections/all"]
+      });
+
+      const stateHash = "a".repeat(64);
+      await createMerchantCenterOAuthState(created.store.id, {
+        stateHash,
+        redirectUri: "https://app.example.com/oauth/callback",
+        expiresAt: new Date(Date.now() + 60_000)
+      });
+      await expect(consumeMerchantCenterOAuthState(stateHash)).resolves.toMatchObject({
+        storeId: created.store.id,
+        redirectUri: "https://app.example.com/oauth/callback"
+      });
+      await expect(consumeMerchantCenterOAuthState(stateHash)).rejects.toThrow();
+
+      const credentialsInput = {
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        tokenType: "Bearer",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        scopes: ["scope-a", "scope-b"],
+        metadata: { provider: "google", authorization: "oauth2" }
+      };
+      const connected = await completeMerchantCenterOAuthAuthorization(stateHash, credentialsInput);
+      expect(connected).toMatchObject({
+        storeId: created.store.id,
+        hasAccessToken: true,
+        hasRefreshToken: true,
+        credentialsVersion: 1,
+        refreshInProgress: false
+      });
+
+      const stateAfterCompletion = await new Client({ connectionString: dbUrlWithSchema });
+      await stateAfterCompletion.connect();
+      const completedStateRows = await stateAfterCompletion.query<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM merchant_center_oauth_states WHERE state_hash = $1",
+        [stateHash]
+      );
+      await stateAfterCompletion.end();
+      expect(completedStateRows.rows[0]).toEqual({ count: "0" });
+
+      const client = new Client({ connectionString: dbUrlWithSchema });
+      await client.connect();
+      const encrypted = await client.query<{
+        encrypted_access_token: string;
+        encrypted_refresh_token: string;
+      }>(
+        `
+          SELECT encrypted_access_token, encrypted_refresh_token
+          FROM merchant_center_oauth_credentials
+          WHERE store_id = $1
+        `,
+        [created.store.id]
+      );
+      await client.end();
+
+      expect(encrypted.rows[0].encrypted_access_token).not.toContain("access-secret");
+      expect(encrypted.rows[0].encrypted_refresh_token).not.toContain("refresh-secret");
+      await expect(getMerchantCenterOAuthCredentials(created.store.id)).resolves.toMatchObject({
+        hasAccessToken: true,
+        hasRefreshToken: true,
+        scopes: ["scope-a", "scope-b"]
+      });
+      await expect(getMerchantCenterOAuthStatus(created.store.id)).resolves.toMatchObject({
+        storeId: created.store.id,
+        credentials: { credentialsVersion: 1 }
+      });
+
+      const lockId = "70000000-0000-4000-8000-000000000002";
+      await expect(claimMerchantCenterOAuthRefresh(created.store.id, lockId)).resolves.toMatchObject({
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret"
+      });
+      await expect(
+        claimMerchantCenterOAuthRefresh(
+          created.store.id,
+          "70000000-0000-4000-8000-000000000003"
+        )
+      ).rejects.toBeInstanceOf(MerchantCenterOAuthRefreshInProgressError);
+
+      await expect(
+        completeMerchantCenterOAuthRefresh(created.store.id, lockId, {
+          accessToken: "new-access-secret",
+          refreshToken: "refresh-secret",
+          tokenType: "Bearer",
+          expiresAt: new Date(Date.now() + 7_200_000),
+          scopes: ["scope-a"],
+          metadata: { provider: "google", authorization: "oauth2" }
+        })
+      ).resolves.toMatchObject({ credentialsVersion: 2, refreshInProgress: false });
+      await expect(
+        completeMerchantCenterOAuthRefresh(created.store.id, lockId, {
+          accessToken: "stale-access",
+          refreshToken: "refresh-secret",
+          tokenType: "Bearer",
+          expiresAt: new Date(Date.now() + 3_600_000),
+          scopes: ["scope-a"],
+          metadata: { provider: "google" }
+        })
+      ).rejects.toBeInstanceOf(MerchantCenterOAuthCredentialLeaseLostError);
+
+      await disconnectMerchantCenter(created.store.id);
+      const statusAfterDisconnect = await getMerchantCenterOAuthStatus(created.store.id);
+      expect(statusAfterDisconnect).toEqual({ storeId: created.store.id, credentials: null });
+
+      const clientAfterDisconnect = new Client({ connectionString: dbUrlWithSchema });
+      await clientAfterDisconnect.connect();
+      const removedOAuthRows = await clientAfterDisconnect.query<{
+        states: string;
+        credentials: string;
+      }>(
+        `
+          SELECT
+            (SELECT COUNT(*) FROM merchant_center_oauth_states WHERE store_id = $1) AS states,
+            (SELECT COUNT(*) FROM merchant_center_oauth_credentials WHERE store_id = $1) AS credentials
+        `,
+        [created.store.id]
+      );
+      await clientAfterDisconnect.end();
+      expect(removedOAuthRows.rows[0]).toEqual({ states: "0", credentials: "0" });
+
+      const disconnectStateHash = "b".repeat(64);
+      await createMerchantCenterOAuthState(created.store.id, {
+        stateHash: disconnectStateHash,
+        redirectUri: "https://app.example.com/oauth/callback",
+        expiresAt: new Date(Date.now() + 60_000)
+      });
+      await expect(consumeMerchantCenterOAuthState(disconnectStateHash)).resolves.toMatchObject({
+        storeId: created.store.id
+      });
+      await disconnectMerchantCenter(created.store.id);
+
+      await expect(
+        completeMerchantCenterOAuthAuthorization(disconnectStateHash, credentialsInput)
+      ).rejects.toBeInstanceOf(MerchantCenterOAuthStateInvalidError);
+      await expect(getMerchantCenterOAuthStatus(created.store.id)).resolves.toEqual({
+        storeId: created.store.id,
+        credentials: null
+      });
+
+      const clientAfterRace = new Client({ connectionString: dbUrlWithSchema });
+      await clientAfterRace.connect();
+      const raceRows = await clientAfterRace.query<{
+        states: string;
+        credentials: string;
+        account_id: string | null;
+      }>(
+        `
+          SELECT
+            (SELECT COUNT(*) FROM merchant_center_oauth_states WHERE store_id = $1) AS states,
+            (SELECT COUNT(*) FROM merchant_center_oauth_credentials WHERE store_id = $1) AS credentials,
+            merchant_center_account_id AS account_id
+          FROM stores
+          WHERE id = $1
+        `,
+        [created.store.id]
+      );
+      await clientAfterRace.end();
+      expect(raceRows.rows[0]).toEqual({ states: "0", credentials: "0", account_id: null });
+    } finally {
+      if (previousEncryptionKey === undefined) {
+        delete process.env.MERCHANT_CENTER_CREDENTIALS_ENCRYPTION_KEY;
+      } else {
+        process.env.MERCHANT_CENTER_CREDENTIALS_ENCRYPTION_KEY = previousEncryptionKey;
+      }
+    }
   });
 
   it("recalculates, confirms, and invalidates feed product count baseline", async () => {
