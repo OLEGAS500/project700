@@ -3,6 +3,7 @@ import {
   createSnapshotInputSchema,
   createStoreInputSchema,
   emailDestinationInputSchema,
+  incidentLikelySourceSchema,
   sourceCheckStatusSchema,
   telegramDestinationInputSchema,
   updateAlertPreferencesInputSchema,
@@ -46,6 +47,19 @@ describe("core schemas", () => {
       "authentication_failed",
       "parse_failed",
       "source_unavailable"
+    ]);
+  });
+
+  it("centralizes every incident likely-source value used by rules and demo flows", () => {
+    expect(incidentLikelySourceSchema.options).toEqual([
+      "feed",
+      "sitemap",
+      "category",
+      "product_page",
+      "merchant_center",
+      "feed_or_publication",
+      "feed_or_storefront_product_data",
+      "site_template_or_deployment"
     ]);
   });
 

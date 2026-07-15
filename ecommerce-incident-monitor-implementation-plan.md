@@ -473,6 +473,8 @@ Milestone 7.6.3 email run-once runtime is complete and operationally verified. `
 
 Milestone 7.7 permanent payload failures is complete and operationally verified. Claimed delivery intents now receive an explicit immutable payload state: missing, schema-invalid, and unsupported-version payloads are fenced terminal failures with safe stable codes, cleared leases, no sender invocation, and no retry; valid deliveries in the same batch continue normally. Clean GitHub CI passed the updated PostgreSQL smoke suite, including payload-state migration replay, fenced terminal failure after lease reclaim, lease cleanup, error redaction, and valid-delivery isolation within a batch.
 
+Milestone 7 is code-complete and operationally verified through clean GitHub CI. Controlled Telegram and Resend live-provider smoke tests remain separate release gates until a disposable database, test credentials, and private destinations are available; production scheduler and hosting integration remain intentionally out of scope.
+
 ### Milestone 8: Dashboard
 
 Build:
@@ -488,6 +490,8 @@ Acceptance criteria:
 - Agency user can see all stores and open incidents on one screen.
 - Incident detail explains what changed and why the system suspects the likely source.
 - User can acknowledge, ignore, comment, and set maintenance window without database access.
+
+Milestone 8.1 dashboard read models and read-only API is complete and operationally verified. It adds isolated dashboard repositories for store summaries, keyset-paginated incident lists, and safe incident details; clean GitHub CI verified ordered migration replay, deterministic latest source checks, empty-store inclusion, incident status/severity/source filters, keyset pagination, store isolation, bounded samples, stable timeline/comments, and redacted alert-delivery and timeline metadata. The slice deliberately excludes dashboard UI, write actions, settings forms, polling, and new incident decisions.
 
 ### Milestone 9: Merchant Center Integration
 

@@ -65,6 +65,17 @@ export const incidentTypeSchema = z.enum([
   "source_health"
 ]);
 
+export const incidentLikelySourceSchema = z.enum([
+  "feed",
+  "sitemap",
+  "category",
+  "product_page",
+  "merchant_center",
+  "feed_or_publication",
+  "feed_or_storefront_product_data",
+  "site_template_or_deployment"
+]);
+
 const incidentActorSchema = z.string().trim().min(1).max(120);
 
 export const acknowledgeIncidentInputSchema = z.object({
@@ -264,6 +275,7 @@ export type SourceItemSource = z.infer<typeof sourceItemSourceSchema>;
 export type IncidentSeverity = z.infer<typeof incidentSeveritySchema>;
 export type IncidentStatus = z.infer<typeof incidentStatusSchema>;
 export type IncidentType = z.infer<typeof incidentTypeSchema>;
+export type IncidentLikelySource = z.infer<typeof incidentLikelySourceSchema>;
 export type AcknowledgeIncidentInput = z.infer<typeof acknowledgeIncidentInputSchema>;
 export type IgnoreIncidentInput = z.infer<typeof ignoreIncidentInputSchema>;
 export type AddIncidentCommentInput = z.infer<typeof addIncidentCommentInputSchema>;

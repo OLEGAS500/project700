@@ -1,3 +1,5 @@
+import type { IncidentLikelySource } from "./schemas";
+
 export type FeedCatalogDropInput = {
   currentCount: number;
   baselineMedian: number;
@@ -24,7 +26,7 @@ export type RuleEvaluation = {
     changePct?: number;
   }>;
   evidence: string[];
-  likelySource?: string;
+  likelySource?: IncidentLikelySource;
   confidenceScore?: number;
   requiresConfirmation: boolean;
 };
