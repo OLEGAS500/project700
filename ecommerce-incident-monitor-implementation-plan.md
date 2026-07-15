@@ -495,6 +495,8 @@ Milestone 8.1 dashboard read models and read-only API is complete and operationa
 
 Milestone 8.2 stores overview UI is complete and operationally verified. `/dashboard` consumes the existing store-summary read model and presents aggregate store, active-incident, critical-incident, and source-check-issue counts alongside a compact store table. It distinguishes source-check failures from confirmed business incidents, handles loading, empty, and read-failure states without exposing database diagnostics, and links to the existing filtered incident and store-summary read endpoints. Clean GitHub CI passed the full validation pipeline and 29/29 PostgreSQL smoke tests. The slice deliberately excludes incident detail UI, write actions, polling, charts, authentication, and scheduling.
 
+Milestone 8.3.1 incident list UI is code-complete pending clean GitHub CI. It adds a read-only server-rendered `/incidents` route with strict URL filters, keyset pagination, and loading, empty, invalid-query, and read-failure states. The stores overview links only to this real user-facing route; raw API navigation and store detail UI remain absent. It deliberately excludes incident detail UI, incident write actions, polling, charts, settings, authentication, and scheduling.
+
 ### Milestone 9: Merchant Center Integration
 
 Build:
