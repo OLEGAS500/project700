@@ -160,6 +160,17 @@ export const emailDestinationInputSchema = z
     recipientEmails: input.recipientEmails.map((email) => email.toLowerCase())
   }));
 
+export const merchantCenterAccountIdSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{1,32}$/, "Merchant Center account ID must contain only digits");
+
+export const merchantCenterConnectionInputSchema = z
+  .object({
+    merchantCenterAccountId: merchantCenterAccountIdSchema
+  })
+  .strict();
+
 const maintenanceWindowDateSchema = z.string().datetime({ offset: true });
 
 export const createMaintenanceWindowInputSchema = z
@@ -285,6 +296,7 @@ export type AlertPreferences = z.infer<typeof alertPreferencesSchema>;
 export type UpdateAlertPreferencesInput = z.infer<typeof updateAlertPreferencesInputSchema>;
 export type TelegramDestinationInput = z.infer<typeof telegramDestinationInputSchema>;
 export type EmailDestinationInput = z.infer<typeof emailDestinationInputSchema>;
+export type MerchantCenterConnectionInput = z.infer<typeof merchantCenterConnectionInputSchema>;
 export type CreateMaintenanceWindowInput = z.infer<typeof createMaintenanceWindowInputSchema>;
 
 export const defaultStoreThresholds: StoreThresholds = {

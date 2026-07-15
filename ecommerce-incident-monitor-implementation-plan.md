@@ -511,6 +511,8 @@ Milestone 8.4.5 alert destinations UI is complete and operationally verified. `/
 
 ### Milestone 9: Merchant Center Integration
 
+Milestone 9.1 Merchant Center connection contract is complete and operationally verified. It adds a strict numeric account-ID schema, DB-backed connect/read/disconnect operations using the existing `stores.merchant_center_account_id` field, and safe `GET`/`PUT`/`DELETE /api/stores/:id/merchant-center` operations. Only the Merchant Center account identifier is stored or returned; OAuth tokens, provider responses, and background synchronization are deliberately excluded. Invalid payloads, unknown stores, and database failures receive stable safe responses. PostgreSQL smoke and clean GitHub CI verify initial disconnected state, normalized connection, replacement, disconnect, and unknown-store handling.
+
 Build:
 
 - Google OAuth.

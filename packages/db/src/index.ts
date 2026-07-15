@@ -8,6 +8,7 @@ export * from "./dashboard";
 export * from "./email-destinations";
 export * from "./incidents";
 export * from "./maintenance-windows";
+export * from "./merchant-center";
 export * from "./migrations";
 export * from "./snapshots";
 export * from "./stores";
