@@ -220,7 +220,16 @@ async function persistSourceCheckResultWithClient(
           error_code = EXCLUDED.error_code,
           error_message = EXCLUDED.error_message,
           error_samples_json = EXCLUDED.error_samples_json,
-          metadata_json = source_checks.metadata_json || EXCLUDED.metadata_json
+          metadata_json =
+            (source_checks.metadata_json || EXCLUDED.metadata_json) ||
+            CASE
+              WHEN source_checks.metadata_json ? 'merchantItemIssuesConfigurationHash'
+              THEN jsonb_build_object(
+                'merchantItemIssuesConfigurationHash',
+                source_checks.metadata_json -> 'merchantItemIssuesConfigurationHash'
+              )
+              ELSE '{}'::jsonb
+            END
       `,
       [
         snapshotId,

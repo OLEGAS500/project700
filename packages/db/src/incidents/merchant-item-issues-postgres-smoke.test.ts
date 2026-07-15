@@ -1,6 +1,7 @@
 import type { SourceCheckResult, SourceItemInput } from "@eim/core";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { merchantItemIssuesConfigurationHash } from "./merchant-item-issues";
 
 const { Client } = pg;
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -42,7 +43,8 @@ function issueItem(stableKey: string, code: string, severity = "error"): SourceI
 
 function issueResult(
   items: SourceItemInput[],
-  status: SourceCheckResult["status"] = "success"
+  status: SourceCheckResult["status"] = "success",
+  accountId = "123"
 ): SourceCheckResult {
   return {
     source: "merchant_center",
@@ -59,6 +61,7 @@ function issueResult(
     errorMessage: status === "success" ? undefined : "Merchant Center product pagination was incomplete.",
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId),
       productsSeen: items.length,
       productsWithIssues: items.length,
       issuesObserved: items.length,
@@ -221,15 +224,15 @@ describeIfDatabase("merchant item issue incident rule", () => {
     await connectMerchantCenter(first.store.id, { merchantCenterAccountId: "123" });
     await connectMerchantCenter(second.store.id, { merchantCenterAccountId: "456" });
 
-    for (const [storeId, suffix] of [
-      [first.store.id, "one"],
-      [second.store.id, "two"]
+    for (const [storeId, suffix, accountId] of [
+      [first.store.id, "one", "123"],
+      [second.store.id, "two", "456"]
     ] as const) {
       const initial = await createQueuedSnapshot(storeId, "normal_check", `merchant-issue-${suffix}-1`);
       await persistMerchantCenterItemIssuesResult(
         initial.id,
         storeId,
-        issueResult([issueItem("offer:sku-1", "invalid_gtin")])
+        issueResult([issueItem("offer:sku-1", "invalid_gtin")], "success", accountId)
       );
       await createOrUpdateMerchantItemIssuesIncident(storeId, initial.id);
 
@@ -237,7 +240,7 @@ describeIfDatabase("merchant item issue incident rule", () => {
       await persistMerchantCenterItemIssuesResult(
         confirmation.id,
         storeId,
-        issueResult([issueItem("offer:sku-1", "invalid_gtin")])
+        issueResult([issueItem("offer:sku-1", "invalid_gtin")], "success", accountId)
       );
       await createOrUpdateMerchantItemIssuesIncident(storeId, confirmation.id);
     }
@@ -259,6 +262,128 @@ describeIfDatabase("merchant item issue incident rule", () => {
     expect(counts.rows).toHaveLength(2);
     expect(counts.rows.every((row) => row.count === "1")).toBe(true);
     expect(new Set(counts.rows.map((row) => row.store_id)).size).toBe(2);
+  });
+
+  it("rejects observations captured for a previous Merchant account", async () => {
+    const {
+      connectMerchantCenter,
+      createOrUpdateMerchantItemIssuesIncident,
+      createQueuedSnapshot,
+      createStore,
+      persistMerchantCenterItemIssuesResult,
+      updateMerchantItemIssuesRecovery
+    } = await import("@eim/db");
+
+    const created = await createStore({
+      name: "Merchant Issue Configuration Store",
+      domain: "https://merchant-issue-configuration.example.com",
+      sitemapUrl: "https://merchant-issue-configuration.example.com/sitemap.xml",
+      feedUrl: "https://merchant-issue-configuration.example.com/feed.xml",
+      categoryUrls: ["https://merchant-issue-configuration.example.com/collections/all"]
+    });
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "111" });
+
+    const accountASnapshot = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "merchant-issue-configuration-account-a"
+    );
+    await persistMerchantCenterItemIssuesResult(
+      accountASnapshot.id,
+      created.store.id,
+      issueResult([issueItem("offer:account-a", "invalid_gtin")], "success", "111")
+    );
+
+    await connectMerchantCenter(created.store.id, { merchantCenterAccountId: "222" });
+    await expect(
+      createOrUpdateMerchantItemIssuesIncident(created.store.id, accountASnapshot.id)
+    ).resolves.toBeNull();
+
+    const afterReconnect = new Client({ connectionString: dbUrlWithSchema });
+    await afterReconnect.connect();
+    const rejectedState = await afterReconnect.query<{ candidates: string; incidents: string }>(
+      `
+        SELECT
+          (
+            SELECT COUNT(*)
+            FROM incident_debounce_candidates
+            WHERE store_id = $1 AND type = 'merchant_item_issues' AND status = 'pending'
+          ) AS candidates,
+          (
+            SELECT COUNT(*)
+            FROM incidents
+            WHERE store_id = $1 AND type = 'merchant_item_issues'
+          ) AS incidents
+      `,
+      [created.store.id]
+    );
+    await afterReconnect.end();
+    expect(rejectedState.rows[0]).toEqual({ candidates: "0", incidents: "0" });
+
+    const accountBFirst = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "merchant-issue-configuration-account-b-1"
+    );
+    await persistMerchantCenterItemIssuesResult(
+      accountBFirst.id,
+      created.store.id,
+      issueResult([issueItem("offer:account-b", "invalid_gtin")], "success", "222")
+    );
+    await expect(
+      createOrUpdateMerchantItemIssuesIncident(created.store.id, accountBFirst.id)
+    ).resolves.toBeNull();
+
+    const accountBSecond = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "merchant-issue-configuration-account-b-2"
+    );
+    await persistMerchantCenterItemIssuesResult(
+      accountBSecond.id,
+      created.store.id,
+      issueResult([issueItem("offer:account-b", "invalid_gtin")], "success", "222")
+    );
+    const accountBIncident = await createOrUpdateMerchantItemIssuesIncident(
+      created.store.id,
+      accountBSecond.id
+    );
+    expect(accountBIncident).toMatch(/^[0-9a-f-]{36}$/);
+
+    const oldHealthyAccountA = await createQueuedSnapshot(
+      created.store.id,
+      "normal_check",
+      "merchant-issue-configuration-account-a-healthy"
+    );
+    await persistMerchantCenterItemIssuesResult(
+      oldHealthyAccountA.id,
+      created.store.id,
+      issueResult([], "success", "111")
+    );
+    await expect(
+      createOrUpdateMerchantItemIssuesIncident(created.store.id, oldHealthyAccountA.id)
+    ).resolves.toBeNull();
+    await expect(
+      updateMerchantItemIssuesRecovery(created.store.id, oldHealthyAccountA.id)
+    ).resolves.toEqual([]);
+
+    const finalState = new Client({ connectionString: dbUrlWithSchema });
+    await finalState.connect();
+    const incidents = await finalState.query<{ id: string; status: string; configuration_hash: string }>(
+      `
+        SELECT id, status::text, configuration_hash
+        FROM incidents
+        WHERE store_id = $1 AND type = 'merchant_item_issues'
+      `,
+      [created.store.id]
+    );
+    await finalState.end();
+    expect(incidents.rows).toEqual([
+      expect.objectContaining({ id: accountBIncident, status: "open" })
+    ]);
+    expect(incidents.rows[0]?.configuration_hash).toBe(
+      merchantItemIssuesConfigurationHash("222")
+    );
   });
 
   it("does not turn a concurrent partial upsert into a business incident", async () => {

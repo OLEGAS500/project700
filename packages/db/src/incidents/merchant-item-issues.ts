@@ -32,7 +32,8 @@ type MerchantItemIssueProduct = {
 type MerchantItemIssuesCheckRow = {
   snapshot_id: string;
   store_id: string;
-  account_id: string | null;
+  current_account_id: string | null;
+  observed_configuration_hash: string | null;
   status: SourceCheckStatus | null;
 };
 
@@ -330,14 +331,15 @@ async function readMerchantItemIssuesObservation(
   observation: MerchantItemIssuesObservation;
   evaluation: MerchantItemIssuesEvaluation;
 } | null> {
-  const lockClause = lockSourceCheck ? "\n      FOR UPDATE OF source_checks" : "";
+  const lockClause = lockSourceCheck ? "\n      FOR UPDATE OF source_checks, stores" : "";
   const checkResult = await executor.query<MerchantItemIssuesCheckRow>(
     `
       SELECT
         snapshots.id AS snapshot_id,
         snapshots.store_id,
-        stores.merchant_center_account_id AS account_id,
-        source_checks.status
+        stores.merchant_center_account_id AS current_account_id,
+        source_checks.status,
+        source_checks.metadata_json ->> 'merchantItemIssuesConfigurationHash' AS observed_configuration_hash
       FROM snapshots
       JOIN stores ON stores.id = snapshots.store_id
       JOIN source_checks
@@ -354,9 +356,14 @@ async function readMerchantItemIssuesObservation(
 
   if (!check) return null;
 
-  const configurationHash = check.account_id
-    ? merchantItemIssuesConfigurationHash(check.account_id)
+  const currentConfigurationHash = check.current_account_id
+    ? merchantItemIssuesConfigurationHash(check.current_account_id)
     : null;
+  const configurationHash = check.observed_configuration_hash;
+  if (!currentConfigurationHash || !configurationHash || configurationHash !== currentConfigurationHash) {
+    return null;
+  }
+
   const products = await getMerchantItemIssueProducts(storeId, snapshotId, executor);
   const evaluation = buildMerchantItemIssuesEvaluation(products);
 
