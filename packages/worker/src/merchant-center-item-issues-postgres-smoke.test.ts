@@ -14,29 +14,29 @@ function withSearchPath(connectionString: string, schema: string): string {
   return url.toString();
 }
 
-function item(stableKey: string, issueCode: string): SourceItemInput {
+function item(stableKey: string, issueCodes: string | string[]): SourceItemInput {
+  const codes = Array.isArray(issueCodes) ? issueCodes : [issueCodes];
+
   return {
     source: "merchant_center",
     stableKey,
     offerId: stableKey.replace("offer:", ""),
     title: `Product ${stableKey}`,
     merchantStatus: "disapproved",
-    merchantIssues: [
-      {
-        code: issueCode,
-        severity: "disapproved",
-        resolution: "merchant_action",
-        attribute: "gtins",
-        reportingContext: "shopping_ads",
-        description: "Invalid product data",
-        applicableCountries: ["US"]
-      }
-    ],
+    merchantIssues: codes.map((code) => ({
+      code,
+      severity: "disapproved",
+      resolution: "merchant_action",
+      attribute: "gtins",
+      reportingContext: "shopping_ads",
+      description: "Invalid product data",
+      applicableCountries: ["US"]
+    })),
     metadata: {
       merchantDataKind: "item_issues",
       productName: `accounts/123/products/${stableKey}`
     },
-    rawHash: `${stableKey}:${issueCode}`
+    rawHash: `${stableKey}:${codes.join(",")}`
   };
 }
 
@@ -150,12 +150,15 @@ describeIfDatabase("merchant center item issues postgres vertical slice", () => 
     await persistMerchantCenterItemIssuesResult(
       firstSnapshot.id,
       firstStore.store.id,
-      result(issuesUrl, [item("offer:sku-1", "invalid_gtin"), item("offer:sku-2", "missing_price")])
+      result(issuesUrl, [
+        item("offer:sku-1", ["invalid_gtin", "missing_brand"]),
+        item("offer:sku-2", "missing_price")
+      ])
     );
     await persistMerchantCenterItemIssuesResult(
       firstSnapshot.id,
       firstStore.store.id,
-      result(issuesUrl, [], {
+      result(issuesUrl, [item("offer:sku-1", "invalid_gtin"), item("offer:sku-3", "missing_link")], {
         status: "partial",
         errorCode: "merchant_center_products_pagination_http_error",
         errorMessage: "Merchant Center product pagination could not be completed."
@@ -173,8 +176,21 @@ describeIfDatabase("merchant center item issues postgres vertical slice", () => 
       `,
       [firstSnapshot.id]
     );
+    expect(Number(preserved.rows[0].count)).toBe(3);
+
+    const preservedSkuOne = await afterPartial.query<{ merchant_issues_json: unknown }>(
+      `
+        SELECT merchant_issues_json
+        FROM source_items
+        WHERE snapshot_id = $1 AND stable_key = 'offer:sku-1'
+      `,
+      [firstSnapshot.id]
+    );
+    expect(preservedSkuOne.rows[0].merchant_issues_json).toEqual([
+      expect.objectContaining({ code: "invalid_gtin" }),
+      expect.objectContaining({ code: "missing_brand" })
+    ]);
     await afterPartial.end();
-    expect(Number(preserved.rows[0].count)).toBe(2);
 
     await persistMerchantCenterItemIssuesResult(
       firstSnapshot.id,
@@ -204,7 +220,7 @@ describeIfDatabase("merchant center item issues postgres vertical slice", () => 
       `
         SELECT store_id, stable_key, merchant_issues_json, source
         FROM source_items
-        WHERE stable_key IN ('offer:sku-1', 'offer:sku-2', 'offer:feed-only')
+        WHERE stable_key IN ('offer:sku-1', 'offer:sku-2', 'offer:sku-3', 'offer:feed-only')
         ORDER BY store_id, stable_key
       `
     );
@@ -213,6 +229,7 @@ describeIfDatabase("merchant center item issues postgres vertical slice", () => 
     expect(items.rows).toHaveLength(3);
     expect(items.rows.filter((row) => row.source === "merchant_center")).toHaveLength(2);
     expect(items.rows.filter((row) => row.stable_key === "offer:sku-2")).toHaveLength(0);
+    expect(items.rows.filter((row) => row.stable_key === "offer:sku-3")).toHaveLength(0);
     expect(items.rows.filter((row) => row.stable_key === "offer:sku-1")).toHaveLength(2);
     expect(items.rows.find((row) => row.stable_key === "offer:sku-1")?.merchant_issues_json).toEqual([
       expect.objectContaining({ code: "invalid_gtin" })

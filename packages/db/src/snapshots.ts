@@ -251,6 +251,13 @@ async function persistSourceCheckResultWithClient(
         item.stableKey,
         item.metadata ?? {}
       );
+      const merchantIssues = await getMerchantIssuesForPersistence(
+        client,
+        snapshotId,
+        storeId,
+        result.status,
+        item
+      );
 
       await client.query(
         `
@@ -315,7 +322,7 @@ async function persistSourceCheckResultWithClient(
           item.canonicalUrl ?? null,
           item.schemaPresent ?? null,
           item.merchantStatus ?? null,
-          item.merchantIssues ? JSON.stringify(item.merchantIssues) : null,
+          merchantIssues ? JSON.stringify(merchantIssues) : null,
           JSON.stringify(mergedMetadata),
           item.rawHash
         ]
@@ -431,6 +438,76 @@ async function getMergedSourceItemMetadata(
   );
 
   return mergeMetadata(existing.rows[0]?.metadata_json ?? {}, nextMetadata);
+}
+
+async function getMerchantIssuesForPersistence(
+  client: pg.PoolClient,
+  snapshotId: string,
+  storeId: string,
+  status: SourceCheckResult["status"],
+  item: SourceCheckResult["items"][number]
+): Promise<unknown[] | null> {
+  if (!item.merchantIssues) {
+    return null;
+  }
+
+  const isMerchantItemIssue =
+    item.source === "merchant_center" && item.metadata?.merchantDataKind === "item_issues";
+
+  if (status === "success" || !isMerchantItemIssue || !item.stableKey) {
+    return item.merchantIssues;
+  }
+
+  const existing = await client.query<{ merchant_issues_json: unknown }>(
+    `
+      SELECT merchant_issues_json
+      FROM source_items
+      WHERE snapshot_id = $1
+        AND store_id = $2
+        AND source = 'merchant_center'
+        AND stable_key = $3
+      LIMIT 1
+    `,
+    [snapshotId, storeId, item.stableKey]
+  );
+
+  return mergeMerchantIssues(existing.rows[0]?.merchant_issues_json, item.merchantIssues);
+}
+
+function mergeMerchantIssues(current: unknown, next: unknown[]): unknown[] {
+  const merged: unknown[] = [];
+  const seen = new Set<string>();
+  const values = [...(Array.isArray(current) ? current : []), ...next];
+
+  for (const value of values) {
+    const key = merchantIssueIdentity(value);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(value);
+  }
+
+  return merged;
+}
+
+function merchantIssueIdentity(value: unknown): string {
+  if (!isRecord(value)) {
+    return JSON.stringify(value) ?? String(value);
+  }
+
+  const countries = Array.isArray(value.applicableCountries)
+    ? value.applicableCountries.map(String).sort()
+    : [];
+
+  return JSON.stringify([
+    value.code,
+    value.severity,
+    value.resolution,
+    value.attribute,
+    value.reportingContext,
+    countries
+  ]);
 }
 
 function mergeMetadata(
