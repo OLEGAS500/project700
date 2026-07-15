@@ -59,8 +59,8 @@ describeIfDatabase("merchant center status postgres vertical slice", () => {
           JSON.stringify({
             aggregateProductStatuses: [
               {
-                statistics: {
-                  approvedCount: "7",
+                stats: {
+                  activeCount: "7",
                   pendingCount: "2",
                   disapprovedCount: "1"
                 }

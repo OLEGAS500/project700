@@ -42,10 +42,10 @@ function dependencies(
 }
 
 describe("collectMerchantCenterProductStatuses", () => {
-  it("aggregates approved, pending, and disapproved statuses", async () => {
+  it("uses the official v1 endpoint and aggregates current stats fields", async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       expect(String(input)).toBe(
-        "https://merchantapi.googleapis.com/accounts/v1/accounts/123/aggregateProductStatuses"
+        "https://merchantapi.googleapis.com/issueresolution/v1/accounts/123/aggregateProductStatuses?pageSize=250"
       );
       expect(init?.headers).toMatchObject({ authorization: "Bearer access-token" });
       return new Response(
@@ -54,8 +54,8 @@ describe("collectMerchantCenterProductStatuses", () => {
             {
               reportingContext: "SHOPPING_ADS",
               countryCode: "US",
-              statistics: {
-                approvedCount: "10",
+              stats: {
+                activeCount: "10",
                 pendingCount: "2",
                 disapprovedCount: "1"
               }
@@ -97,6 +97,173 @@ describe("collectMerchantCenterProductStatuses", () => {
         pending: 3,
         disapproved: 1
       }
+    });
+  });
+
+  it("follows nextPageToken with the same bounded page size", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      calls.push(url.toString());
+
+      if (!url.searchParams.has("pageToken")) {
+        return new Response(
+          JSON.stringify({
+            aggregateProductStatuses: [
+              { stats: { activeCount: "3", pendingCount: "1", disapprovedCount: "0" } }
+            ],
+            nextPageToken: "page-two"
+          }),
+          { status: 200 }
+        );
+      }
+
+      expect(url.searchParams.get("pageSize")).toBe("250");
+      expect(url.searchParams.get("pageToken")).toBe("page-two");
+      return new Response(
+        JSON.stringify({
+          aggregateProductStatuses: [
+            { stats: { activeCount: "2", pendingCount: "0", disapprovedCount: "1" } }
+          ]
+        }),
+        { status: 200 }
+      );
+    });
+
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl,
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      itemsObserved: 7,
+      totalItemsSeen: 2,
+      skippedItems: 0
+    });
+    expect(calls).toHaveLength(2);
+    expect(result.metadata).toMatchObject({
+      pagination: { pagesFetched: 2, complete: true }
+    });
+  });
+
+  it("returns partial when a pagination token repeats", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          aggregateProductStatuses: [
+            { stats: { activeCount: "3", pendingCount: "0", disapprovedCount: "0" } }
+          ],
+          nextPageToken: "same-token"
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl,
+      dependencies: dependencies()
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.errorCode).toBe("merchant_center_page_token_repeated");
+    expect(result.itemsObserved).toBe(6);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result.metadata)).not.toContain("same-token");
+  });
+
+  it("stops at the page cap without looping forever", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          aggregateProductStatuses: [
+            { stats: { activeCount: "4", pendingCount: "0", disapprovedCount: "0" } }
+          ],
+          nextPageToken: "another-page"
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl,
+      limits: { maxPages: 1 },
+      dependencies: dependencies()
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.errorCode).toBe("merchant_center_page_limit");
+    expect(result.itemsObserved).toBe(4);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an oversized pagination token without sending it", async () => {
+    const oversizedToken = "x".repeat(20);
+    const fetchImpl = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          aggregateProductStatuses: [
+            { stats: { activeCount: "1", pendingCount: "0", disapprovedCount: "0" } }
+          ],
+          nextPageToken: oversizedToken
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl,
+      limits: { maxPageTokenLength: 8 },
+      dependencies: dependencies()
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.errorCode).toBe("merchant_center_page_token_too_long");
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.stringify(result.metadata)).not.toContain(oversizedToken);
+  });
+
+  it("keeps earlier counts when a later page fails", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (!new URL(String(input)).searchParams.has("pageToken")) {
+        return new Response(
+          JSON.stringify({
+            aggregateProductStatuses: [
+              { stats: { activeCount: "8", pendingCount: "1", disapprovedCount: "0" } }
+            ],
+            nextPageToken: "failing-page"
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response("unavailable details", { status: 503 });
+    });
+
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl,
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "partial",
+      errorCode: "merchant_center_pagination_http_error",
+      httpStatus: 503,
+      itemsObserved: 9
+    });
+    expect(result.errorMessage).not.toContain("unavailable details");
+    expect(result.metadata).toMatchObject({
+      merchantStatusCounts: { total: 9, approved: 8, pending: 1, disapproved: 0 },
+      pagination: { pagesFetched: 1, complete: false }
     });
   });
 
