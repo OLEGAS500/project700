@@ -2735,6 +2735,28 @@ describeIfDatabase("postgres smoke", () => {
         disabledAt: null
       });
 
+      const disabledViaUpsert = await upsertEmailDestination(
+        configuredStore.store.id,
+        { recipientEmails: ["alerts@example.com", "ops@example.com"], enabled: false },
+        client
+      );
+      expect(disabledViaUpsert).toMatchObject({
+        id: createdDestination.id,
+        enabled: false,
+        disabledAt: expect.any(String)
+      });
+
+      const reenabledViaUpsert = await upsertEmailDestination(
+        configuredStore.store.id,
+        { recipientEmails: ["alerts@example.com", "ops@example.com"], enabled: true },
+        client
+      );
+      expect(reenabledViaUpsert).toMatchObject({
+        id: createdDestination.id,
+        enabled: true,
+        disabledAt: null
+      });
+
       await Promise.all([
         upsertEmailDestination(configuredStore.store.id, {
           recipientEmails: ["concurrent-a@example.com"],
