@@ -340,7 +340,7 @@ async function readMerchantItemIssuesObservation(
         source_checks.status
       FROM snapshots
       JOIN stores ON stores.id = snapshots.store_id
-      LEFT JOIN source_checks
+      JOIN source_checks
         ON source_checks.snapshot_id = snapshots.id
        AND source_checks.store_id = snapshots.store_id
        AND source_checks.source = 'merchant_center'
