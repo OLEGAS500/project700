@@ -34,31 +34,25 @@ export async function GET(request: Request) {
   }
 
   if (providerError || !code || code.length > 4096) {
-    return NextResponse.json(
-      { error: "Merchant Center authorization was not completed" },
-      { status: 400 }
-    );
+    if (providerError) {
+      return redirectToMerchantCenter(request, stateRecord.storeId, "cancelled");
+    }
+    return redirectToMerchantCenter(request, stateRecord.storeId, "error");
   }
 
   try {
     const configuration = loadMerchantCenterOAuthConfiguration();
     if (stateRecord.redirectUri !== configuration.redirectUri) {
-      return NextResponse.json(
-        { error: "Merchant Center OAuth authorization must be restarted" },
-        { status: 400 }
-      );
+      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
     }
     const tokenResponse = await exchangeMerchantCenterAuthorizationCode(configuration, code);
     const refreshToken = tokenResponse.refresh_token;
 
     if (!refreshToken || !Number.isSafeInteger(tokenResponse.expires_in)) {
-      return NextResponse.json(
-        { error: "Merchant Center authorization did not return usable offline credentials" },
-        { status: 502 }
-      );
+      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
     }
 
-    const credentials = await completeMerchantCenterOAuthAuthorization(stateHash, {
+    await completeMerchantCenterOAuthAuthorization(stateHash, {
       accessToken: tokenResponse.access_token,
       refreshToken,
       tokenType: tokenResponse.token_type ?? "Bearer",
@@ -67,27 +61,18 @@ export async function GET(request: Request) {
       metadata: { provider: "google", authorization: "oauth2" }
     });
 
-    return NextResponse.json({ connected: true, storeId: stateRecord.storeId, credentials });
+    return redirectToMerchantCenter(request, stateRecord.storeId, "connected");
   } catch (error) {
     if (error instanceof MerchantCenterOAuthConfigurationError) {
-      return NextResponse.json(
-        { error: "Merchant Center OAuth is not configured" },
-        { status: 503 }
-      );
+      return redirectToMerchantCenter(request, stateRecord.storeId, "configuration_unavailable");
     }
     if (error instanceof MerchantCenterOAuthProviderError) {
-      return NextResponse.json(
-        { error: providerErrorMessage(error.code) },
-        { status: 502 }
-      );
+      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
     }
     if (error instanceof MerchantCenterOAuthStateInvalidError) {
-      return NextResponse.json(
-        { error: "Merchant Center authorization is no longer valid" },
-        { status: 409 }
-      );
+      return redirectToMerchantCenter(request, stateRecord.storeId, "reconnect_required");
     }
-    return unavailableResponse();
+    return redirectToMerchantCenter(request, stateRecord.storeId, "error");
   }
 }
 
@@ -96,15 +81,21 @@ function normalizeScopes(value: string | undefined, fallback: string[]): string[
   return [...new Set(scopes)].slice(0, 32);
 }
 
-function providerErrorMessage(code: MerchantCenterOAuthProviderError["code"]): string {
-  return code === "oauth_response_invalid"
-    ? "Merchant Center returned an invalid OAuth response"
-    : "Merchant Center OAuth authorization failed";
-}
-
 function unavailableResponse(): NextResponse {
   return NextResponse.json(
     { error: "Merchant Center OAuth callback is temporarily unavailable" },
     { status: 503 }
   );
+}
+
+function redirectToMerchantCenter(
+  request: Request,
+  storeId: string,
+  outcome: "connected" | "cancelled" | "error" | "configuration_unavailable" | "reconnect_required"
+): NextResponse {
+  const target = new URL(
+    `/stores/${encodeURIComponent(storeId)}/merchant-center?oauth=${outcome}`,
+    request.url
+  );
+  return NextResponse.redirect(target, { status: 303 });
 }
