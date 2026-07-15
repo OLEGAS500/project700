@@ -1,4 +1,4 @@
-const MAX_DECIMAL_INPUT_LENGTH = 64;
+const MAX_DECIMAL_INPUT_LENGTH = 512;
 const MAX_DECIMAL_OUTPUT_LENGTH = 4096;
 const DECIMAL_PATTERN = /^(\d+)(?:\.(\d+))?$/;
 const DECIMAL_WITH_EXPONENT_PATTERN = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i;
@@ -24,7 +24,7 @@ function shiftDecimal(raw: string, shift: number, allowExponent: boolean): strin
 
   const [, integerPart, fractionPart = "", exponentText] = match;
   const exponent = Number(exponentText ?? 0);
-  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > MAX_DECIMAL_INPUT_LENGTH) return null;
+  if (!Number.isSafeInteger(exponent)) return null;
 
   const digits = integerPart + fractionPart;
   const decimalIndex = integerPart.length + exponent + shift;
