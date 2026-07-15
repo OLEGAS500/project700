@@ -102,6 +102,7 @@ describeIfDatabase("merchant item issue incident rule", () => {
       createQueuedSnapshot,
       createStore,
       getDashboardIncidentDetail,
+      listDashboardMerchantRemediationQueue,
       persistMerchantCenterItemIssuesResult,
       updateMerchantItemIssuesRecovery
     } = await import("@eim/db");
@@ -187,6 +188,32 @@ describeIfDatabase("merchant item issue incident rule", () => {
         expect.objectContaining({ stableKey: "offer:sku-2", priority: "critical" })
       ])
     });
+
+    const firstQueue = await listDashboardMerchantRemediationQueue({
+      incidentId: incidentId!,
+      limit: 1
+    });
+    expect(firstQueue.items).toEqual([
+      expect.objectContaining({ stableKey: "offer:sku-1", priority: "critical", issueCount: 1 })
+    ]);
+    expect(firstQueue.nextCursor).toBeTruthy();
+
+    await expect(
+      listDashboardMerchantRemediationQueue({
+        incidentId: incidentId!,
+        cursor: firstQueue.nextCursor,
+        limit: 1
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ stableKey: "offer:sku-2" })],
+      nextCursor: null
+    });
+    await expect(
+      listDashboardMerchantRemediationQueue({ incidentId: incidentId!, issueCode: "missing_brand" })
+    ).resolves.toMatchObject({ items: [expect.objectContaining({ stableKey: "offer:sku-2" })] });
+    await expect(
+      listDashboardMerchantRemediationQueue({ incidentId: incidentId!, search: "sku-1" })
+    ).resolves.toMatchObject({ items: [expect.objectContaining({ stableKey: "offer:sku-1" })] });
 
     const healthyFirst = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-healthy-1");
     await persistMerchantCenterItemIssuesResult(

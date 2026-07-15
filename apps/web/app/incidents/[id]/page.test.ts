@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const database = vi.hoisted(() => ({
-  getDashboardIncidentDetail: vi.fn()
+  getDashboardIncidentDetail: vi.fn(),
+  listDashboardMerchantRemediationQueue: vi.fn(),
+  InvalidDashboardMerchantRemediationCursorError: class extends Error {}
 }));
 
 const navigation = vi.hoisted(() => ({
@@ -20,6 +22,7 @@ const incidentId = "70000000-0000-4000-8000-000000000001";
 describe("incident detail page", () => {
   beforeEach(() => {
     database.getDashboardIncidentDetail.mockReset();
+    database.listDashboardMerchantRemediationQueue.mockReset();
     navigation.notFound.mockReset();
   });
 
@@ -97,19 +100,59 @@ describe("incident detail page", () => {
       ]
     };
     database.getDashboardIncidentDetail.mockResolvedValue(detail);
+    database.listDashboardMerchantRemediationQueue.mockResolvedValue({
+      items: [
+        {
+          stableKey: "offer:critical",
+          offerId: "critical",
+          title: "Critical product",
+          priority: "critical",
+          issueCount: 2,
+          issueCodes: ["invalid_gtin"],
+          affectedAttributes: ["gtin"],
+          detailsTruncated: false
+        }
+      ],
+      nextCursor: null
+    });
 
-    const html = await renderPage(incidentId);
+    const html = await renderPage(incidentId, { issueCode: "invalid_gtin" });
 
     expect(html).toContain("Remediation triage");
+    expect(html).toContain("Remediation queue");
     expect(html).toContain("Invalid Gtin");
     expect(html).toContain("Critical product");
+    expect(html).toContain('name="issueCode"');
+    expect(html).toContain('value="invalid_gtin"');
+    expect(html).toContain(`/incidents/${incidentId}?issueCode=invalid_gtin`);
     expect(html).not.toContain("provider description");
     expect(html).not.toContain("documentationUrl");
   });
+
+  it("rejects repeated remediation query parameters before reading the database", async () => {
+    const html = await renderPage(incidentId, { issueCode: ["invalid_gtin", "missing_brand"] });
+
+    expect(html).toContain("Invalid remediation filter");
+    expect(database.getDashboardIncidentDetail).not.toHaveBeenCalled();
+    expect(database.listDashboardMerchantRemediationQueue).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown remediation query parameters before reading the database", async () => {
+    const html = await renderPage(incidentId, { provider: "google" });
+
+    expect(html).toContain("Invalid remediation filter");
+    expect(database.getDashboardIncidentDetail).not.toHaveBeenCalled();
+    expect(database.listDashboardMerchantRemediationQueue).not.toHaveBeenCalled();
+  });
 });
 
-async function renderPage(id: string): Promise<string> {
-  return renderToStaticMarkup(await IncidentDetailPage({ params: Promise.resolve({ id }) }));
+async function renderPage(
+  id: string,
+  searchParams: Record<string, string | string[] | undefined> = {}
+): Promise<string> {
+  return renderToStaticMarkup(
+    await IncidentDetailPage({ params: Promise.resolve({ id }), searchParams: Promise.resolve(searchParams) })
+  );
 }
 
 function createSourceHealthDetail(): DashboardIncidentDetail {

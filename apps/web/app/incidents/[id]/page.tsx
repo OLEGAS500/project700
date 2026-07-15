@@ -1,5 +1,14 @@
-import { getDashboardIncidentDetail } from "@eim/db";
-import type { DashboardIncidentDetail } from "@eim/db";
+import {
+  getDashboardIncidentDetail,
+  listDashboardMerchantRemediationQueue,
+  InvalidDashboardMerchantRemediationCursorError
+} from "@eim/db";
+import type {
+  DashboardIncidentDetail,
+  DashboardMerchantRemediationQueueResult,
+  DashboardMerchantRemediationSort,
+  MerchantIssuePriority
+} from "@eim/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
@@ -16,9 +25,27 @@ export const dynamic = "force-dynamic";
 
 type IncidentDetailPageProps = {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 const incidentIdSchema = z.string().uuid();
+const merchantRemediationQuerySchema = z.object({
+  issueCode: z.string().trim().min(1).max(256).optional(),
+  severity: z.string().trim().min(1).max(64).optional(),
+  priority: z.enum(["critical", "high", "normal"]).optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  sort: z.enum(["priority", "issue_count", "stable_key", "title"]).default("priority"),
+  cursor: z.string().max(2048).optional()
+});
+
+type MerchantRemediationQuery = {
+  issueCode: string | null;
+  severity: string | null;
+  priority: MerchantIssuePriority | null;
+  search: string | null;
+  sort: DashboardMerchantRemediationSort;
+  cursor: string | null;
+};
 
 const severityLabels = {
   critical: "Critical",
@@ -35,13 +62,16 @@ const statusLabels = {
   ignored: "Ignored"
 } as const;
 
-export default async function IncidentDetailPage({ params }: IncidentDetailPageProps) {
+export default async function IncidentDetailPage({ params, searchParams }: IncidentDetailPageProps) {
   const { id } = await params;
   const parsedId = incidentIdSchema.safeParse(id);
 
   if (!parsedId.success) {
     return <DetailState kind="invalid" />;
   }
+
+  const remediationQuery = parseMerchantRemediationQuery(searchParams ? await searchParams : {});
+  if (!remediationQuery) return <DetailState kind="invalid-query" />;
 
   let detail: DashboardIncidentDetail | null | undefined;
   let readFailed = false;
@@ -60,6 +90,22 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
 
   const { incident, store } = detail;
   const sourceHealthContext = incidentContext(incident.type);
+  let remediationQueue: DashboardMerchantRemediationQueueResult | null = null;
+  let remediationQueueReadFailed = false;
+
+  if (incident.type === "merchant_item_issues") {
+    try {
+      remediationQueue = await listDashboardMerchantRemediationQueue({
+        incidentId: incident.id,
+        ...remediationQuery
+      });
+    } catch (error) {
+      if (error instanceof InvalidDashboardMerchantRemediationCursorError) {
+        return <DetailState kind="invalid-query" />;
+      }
+      remediationQueueReadFailed = true;
+    }
+  }
 
   return (
     <main className="dashboard-shell incident-detail-shell">
@@ -101,7 +147,18 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
 
       <IncidentActions incidentId={incident.id} status={incident.status} />
       <SignalSection signals={detail.signals} />
-      <MerchantIssueTriageSection summary={detail.merchantIssueSummary} />
+      <MerchantIssueTriageSection
+        incidentId={incident.id}
+        query={remediationQuery}
+        summary={detail.merchantIssueSummary}
+      />
+      <MerchantRemediationQueueSection
+        incidentId={incident.id}
+        query={remediationQuery}
+        queue={remediationQueue}
+        readFailed={remediationQueueReadFailed}
+        summary={detail.merchantIssueSummary}
+      />
       <SampleSection samples={detail.samples} />
       <TimelineSection timeline={detail.timeline} />
       <CommentSection comments={detail.comments} />
@@ -110,11 +167,16 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
   );
 }
 
-function DetailState({ kind }: { kind: "invalid" | "failure" }) {
+function DetailState({ kind }: { kind: "invalid" | "invalid-query" | "failure" }) {
   const content = {
     invalid: {
       title: "Invalid incident link",
       message: "This incident identifier is not valid.",
+      className: "incident-state-warning"
+    },
+    "invalid-query": {
+      title: "Invalid remediation filter",
+      message: "The remediation queue filter is not valid.",
       className: "incident-state-warning"
     },
     failure: {
@@ -136,6 +198,51 @@ function DetailState({ kind }: { kind: "invalid" | "failure" }) {
       </section>
     </main>
   );
+}
+
+function parseMerchantRemediationQuery(
+  raw: Record<string, string | string[] | undefined>
+): MerchantRemediationQuery | null {
+  const acceptedKeys = ["issueCode", "severity", "priority", "search", "sort", "cursor"] as const;
+  if (Object.keys(raw).some((key) => !acceptedKeys.includes(key as (typeof acceptedKeys)[number]))) return null;
+  const values: Record<string, string> = {};
+  for (const key of acceptedKeys) {
+    const value = raw[key];
+    if (Array.isArray(value)) return null;
+    if (typeof value === "string" && value.trim()) values[key] = value;
+  }
+
+  const parsed = merchantRemediationQuerySchema.safeParse(values);
+  if (!parsed.success) return null;
+  return {
+    issueCode: parsed.data.issueCode ?? null,
+    severity: parsed.data.severity?.toLowerCase() ?? null,
+    priority: parsed.data.priority ?? null,
+    search: parsed.data.search ?? null,
+    sort: parsed.data.sort,
+    cursor: parsed.data.cursor ?? null
+  };
+}
+
+function merchantRemediationHref(
+  incidentId: string,
+  query: MerchantRemediationQuery,
+  overrides: Partial<MerchantRemediationQuery> = {}
+): string {
+  const next = {
+    ...query,
+    ...overrides,
+    cursor: Object.prototype.hasOwnProperty.call(overrides, "cursor") ? overrides.cursor ?? null : null
+  };
+  const params = new URLSearchParams();
+  if (next.issueCode) params.set("issueCode", next.issueCode);
+  if (next.severity) params.set("severity", next.severity);
+  if (next.priority) params.set("priority", next.priority);
+  if (next.search) params.set("search", next.search);
+  if (next.sort !== "priority") params.set("sort", next.sort);
+  if (next.cursor) params.set("cursor", next.cursor);
+  const queryString = params.toString();
+  return `/incidents/${encodeURIComponent(incidentId)}${queryString ? `?${queryString}` : ""}`;
 }
 
 function DetailFact({ label, value }: { label: string; value: string }) {
@@ -187,8 +294,12 @@ function SignalSection({ signals }: { signals: DashboardIncidentDetail["signals"
 }
 
 function MerchantIssueTriageSection({
+  incidentId,
+  query,
   summary
 }: {
+  incidentId: string;
+  query: MerchantRemediationQuery;
   summary: DashboardIncidentDetail["merchantIssueSummary"];
 }) {
   if (!summary) return null;
@@ -223,7 +334,14 @@ function MerchantIssueTriageSection({
               <tbody>
                 {summary.issueGroups.map((group) => (
                   <tr key={group.code}>
-                    <td>{formatIdentifier(group.code)}</td>
+                    <td>
+                      <Link
+                        className="detail-filter-link"
+                        href={merchantRemediationHref(incidentId, query, { issueCode: group.code })}
+                      >
+                        {formatIdentifier(group.code)}
+                      </Link>
+                    </td>
                     <td>{formatIdentifier(group.priority)}</td>
                     <td>{group.issueCount.toLocaleString("en")}</td>
                     <td>{group.productCount.toLocaleString("en")}</td>
@@ -275,6 +393,154 @@ function MerchantIssueTriageSection({
           {summary.groupsTruncated ? <p>Issue groups and group attributes are bounded.</p> : null}
         </div>
       ) : null}
+    </DetailSection>
+  );
+}
+
+function MerchantRemediationQueueSection({
+  incidentId,
+  query,
+  queue,
+  readFailed,
+  summary
+}: {
+  incidentId: string;
+  query: MerchantRemediationQuery;
+  queue: DashboardMerchantRemediationQueueResult | null;
+  readFailed: boolean;
+  summary: DashboardIncidentDetail["merchantIssueSummary"];
+}) {
+  const issueCodes = summary?.issueGroups.map((group) => group.code) ?? [];
+  const severities = [...new Set(summary?.issueGroups.flatMap((group) => group.severities) ?? [])].sort();
+  const hasFilters = Boolean(query.issueCode || query.severity || query.priority || query.search);
+
+  return (
+    <DetailSection
+      title="Remediation queue"
+      description="Read-only Merchant Center products from the snapshot that opened this incident."
+    >
+      {readFailed ? (
+        <EmptyDetailSection message="The remediation queue could not be read right now." />
+      ) : (
+        <>
+          <form className="remediation-filter-form" method="get">
+            <label>
+              Search products
+              <input defaultValue={query.search ?? ""} name="search" placeholder="Offer ID, stable key, or title" />
+            </label>
+            <label>
+              Issue code
+              <select defaultValue={query.issueCode ?? ""} name="issueCode">
+                <option value="">All issue codes</option>
+                {issueCodes.map((code) => (
+                  <option key={code} value={code}>
+                    {formatIdentifier(code)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Severity
+              <select defaultValue={query.severity ?? ""} name="severity">
+                <option value="">All severities</option>
+                {severities.map((severity) => (
+                  <option key={severity} value={severity}>
+                    {formatIdentifier(severity)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Priority
+              <select defaultValue={query.priority ?? ""} name="priority">
+                <option value="">All priorities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="normal">Normal</option>
+              </select>
+            </label>
+            <label>
+              Sort by
+              <select defaultValue={query.sort} name="sort">
+                <option value="priority">Priority</option>
+                <option value="issue_count">Issue count</option>
+                <option value="stable_key">Stable key</option>
+                <option value="title">Title</option>
+              </select>
+            </label>
+            <div className="remediation-filter-actions">
+              <button type="submit">Apply filters</button>
+              {hasFilters ? <Link href={`/incidents/${encodeURIComponent(incidentId)}`}>Reset</Link> : null}
+            </div>
+          </form>
+
+          {hasFilters ? (
+            <div className="remediation-active-filters" aria-label="Active remediation filters">
+              <span>Active filters:</span>
+              {query.issueCode ? (
+                <Link href={merchantRemediationHref(incidentId, query, { issueCode: null })}>
+                  Issue {formatIdentifier(query.issueCode)} ×
+                </Link>
+              ) : null}
+              {query.severity ? (
+                <Link href={merchantRemediationHref(incidentId, query, { severity: null })}>
+                  Severity {formatIdentifier(query.severity)} ×
+                </Link>
+              ) : null}
+              {query.priority ? (
+                <Link href={merchantRemediationHref(incidentId, query, { priority: null })}>
+                  Priority {formatIdentifier(query.priority)} ×
+                </Link>
+              ) : null}
+              {query.search ? (
+                <Link href={merchantRemediationHref(incidentId, query, { search: null })}>
+                  Search {query.search} ×
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!queue || queue.items.length === 0 ? (
+            <EmptyDetailSection message="No products match the current remediation filters." />
+          ) : (
+            <div className="detail-table-scroll">
+              <table className="detail-table remediation-queue-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Product</th>
+                    <th scope="col">Stable key</th>
+                    <th scope="col">Offer ID</th>
+                    <th scope="col">Issue codes</th>
+                    <th scope="col">Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queue.items.map((item) => (
+                    <tr key={item.stableKey}>
+                      <td>{formatIdentifier(item.priority)}</td>
+                      <td>{item.title ?? item.offerId ?? "Unnamed product"}</td>
+                      <td>{item.stableKey}</td>
+                      <td>{item.offerId ?? "-"}</td>
+                      <td>
+                        {item.issueCodes.map(formatIdentifier).join(", ")}
+                        {item.detailsTruncated ? <span className="detail-bounded-note">Limited details</span> : null}
+                      </td>
+                      <td>{item.issueCount.toLocaleString("en")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {queue?.nextCursor ? (
+            <nav className="remediation-pagination" aria-label="Remediation queue pagination">
+              <Link href={merchantRemediationHref(incidentId, query, { cursor: queue.nextCursor })}>Next page</Link>
+            </nav>
+          ) : null}
+        </>
+      )}
     </DetailSection>
   );
 }
