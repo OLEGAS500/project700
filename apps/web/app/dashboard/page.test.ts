@@ -32,6 +32,8 @@ describe("stores overview", () => {
     const html = renderToStaticMarkup(await DashboardPage());
 
     expect(html).toContain(`href="/stores/${storeId}/maintenance"`);
+    expect(html).toContain(`href="/stores/${storeId}/thresholds"`);
     expect(html).toContain("Maintenance");
+    expect(html).toContain("Thresholds");
   });
 });

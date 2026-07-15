@@ -670,6 +670,101 @@ textarea:disabled {
   align-content: start;
 }
 
+.thresholds-shell {
+  max-width: 1120px;
+}
+
+.thresholds-domain {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.thresholds-intro {
+  padding: 30px 0 20px;
+}
+
+.thresholds-intro h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.thresholds-intro p {
+  max-width: 680px;
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.threshold-form {
+  display: grid;
+  gap: 16px;
+  padding-bottom: 30px;
+}
+
+.threshold-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.threshold-fieldset legend {
+  padding: 0 8px;
+  color: var(--accent-dark);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.threshold-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.threshold-field {
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.threshold-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.threshold-input-row em {
+  min-width: 76px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  text-align: right;
+}
+
+.threshold-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
+.threshold-form-footer button {
+  min-width: 150px;
+  padding: 0 16px;
+}
+
+.threshold-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .back-link {
   padding-bottom: 3px;
   white-space: nowrap;
@@ -1592,6 +1687,14 @@ textarea:disabled {
 
   .maintenance-window-action {
     justify-items: start;
+  }
+
+  .threshold-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .threshold-form-footer button {
+    width: 100%;
   }
 }
 
