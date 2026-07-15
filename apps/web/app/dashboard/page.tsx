@@ -77,7 +77,7 @@ export default async function DashboardPage() {
                       <th scope="col">Source observations</th>
                       <th scope="col">Business incidents</th>
                       <th scope="col">Last check</th>
-                      <th scope="col">Incidents</th>
+                      <th scope="col">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -129,9 +129,12 @@ function StoreRow({ store }: { store: DashboardStoreSummary }) {
         </div>
       </td>
       <td className="last-check">{formatTimestamp(store.lastCheckedAt)}</td>
-      <td>
+      <td className="dashboard-store-actions">
         <Link className="incident-list-link" href={"/incidents?storeId=" + encodeURIComponent(store.id)}>
           Incidents
+        </Link>
+        <Link className="incident-list-link" href={`/stores/${store.id}/maintenance`}>
+          Maintenance
         </Link>
       </td>
     </tr>
