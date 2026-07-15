@@ -1,6 +1,6 @@
 import {
-  incidentSeveritySchema,
   incidentLikelySourceSchema,
+  incidentSeveritySchema,
   incidentStatusSchema,
   incidentTypeSchema
 } from "@eim/core";

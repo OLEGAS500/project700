@@ -1,6 +1,6 @@
 import { InvalidDashboardCursorError, listDashboardIncidents } from "@eim/db";
 import { NextResponse } from "next/server";
-import { parseDashboardIncidentQuery } from "./query";
+import { parseDashboardIncidentQuery } from "../../../lib/dashboard-incident-query";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDashboardIncidentQuery } from "./query";
+import { parseDashboardIncidentQuery } from "../../../lib/dashboard-incident-query";
 
 describe("dashboard incident query parsing", () => {
   it("accepts the supported filters and bounded limit", () => {
