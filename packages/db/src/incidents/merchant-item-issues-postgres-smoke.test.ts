@@ -161,6 +161,32 @@ describeIfDatabase("merchant item issue incident rule", () => {
         })
       ])
     );
+    expect(detail?.merchantIssueSummary).toMatchObject({
+      totalProducts: 2,
+      totalIssues: 2,
+      truncated: false,
+      productsTruncated: false,
+      issuesTruncated: false,
+      groupsTruncated: false,
+      issueGroups: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_gtin",
+          issueCount: 1,
+          productCount: 1,
+          priority: "critical"
+        }),
+        expect.objectContaining({
+          code: "missing_brand",
+          issueCount: 1,
+          productCount: 1,
+          priority: "critical"
+        })
+      ]),
+      prioritizedProducts: expect.arrayContaining([
+        expect.objectContaining({ stableKey: "offer:sku-1", priority: "critical" }),
+        expect.objectContaining({ stableKey: "offer:sku-2", priority: "critical" })
+      ])
+    });
 
     const healthyFirst = await createQueuedSnapshot(created.store.id, "normal_check", "merchant-issue-healthy-1");
     await persistMerchantCenterItemIssuesResult(

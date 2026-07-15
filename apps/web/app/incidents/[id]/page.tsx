@@ -101,6 +101,7 @@ export default async function IncidentDetailPage({ params }: IncidentDetailPageP
 
       <IncidentActions incidentId={incident.id} status={incident.status} />
       <SignalSection signals={detail.signals} />
+      <MerchantIssueTriageSection summary={detail.merchantIssueSummary} />
       <SampleSection samples={detail.samples} />
       <TimelineSection timeline={detail.timeline} />
       <CommentSection comments={detail.comments} />
@@ -181,6 +182,99 @@ function SignalSection({ signals }: { signals: DashboardIncidentDetail["signals"
           </table>
         </div>
       )}
+    </DetailSection>
+  );
+}
+
+function MerchantIssueTriageSection({
+  summary
+}: {
+  summary: DashboardIncidentDetail["merchantIssueSummary"];
+}) {
+  if (!summary) return null;
+
+  return (
+    <DetailSection
+      title="Remediation triage"
+      description="Grouped Merchant Center issue codes and the highest-priority affected products."
+    >
+      <dl className="detail-facts">
+        <DetailFact label="Affected products" value={summary.totalProducts.toLocaleString("en")} />
+        <DetailFact label="Normalized issues" value={summary.totalIssues.toLocaleString("en")} />
+        <DetailFact label="Issue groups" value={summary.issueGroups.length.toLocaleString("en")} />
+      </dl>
+
+      {summary.issueGroups.length === 0 ? (
+        <EmptyDetailSection message="No normalized issue codes are available for triage." />
+      ) : (
+        <>
+          <h3 className="detail-subheading">Grouped issue codes</h3>
+          <div className="detail-table-scroll">
+            <table className="detail-table merchant-issue-group-table">
+              <thead>
+                <tr>
+                  <th scope="col">Issue code</th>
+                  <th scope="col">Priority</th>
+                  <th scope="col">Issues</th>
+                  <th scope="col">Products</th>
+                  <th scope="col">Attributes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.issueGroups.map((group) => (
+                  <tr key={group.code}>
+                    <td>{formatIdentifier(group.code)}</td>
+                    <td>{formatIdentifier(group.priority)}</td>
+                    <td>{group.issueCount.toLocaleString("en")}</td>
+                    <td>{group.productCount.toLocaleString("en")}</td>
+                    <td>{group.attributes.map(formatIdentifier).join(", ") || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <h3 className="detail-subheading">Priority products</h3>
+          {summary.prioritizedProducts.length === 0 ? (
+            <EmptyDetailSection message="No affected products are available for triage." />
+          ) : (
+            <div className="detail-table-scroll">
+              <table className="detail-table merchant-issue-product-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Product</th>
+                    <th scope="col">Stable key</th>
+                    <th scope="col">Issue codes</th>
+                    <th scope="col">Attributes</th>
+                    <th scope="col">Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.prioritizedProducts.map((product) => (
+                    <tr key={product.stableKey ?? product.offerId ?? product.title}>
+                      <td>{formatIdentifier(product.priority)}</td>
+                      <td>{product.title ?? product.offerId ?? "Unnamed product"}</td>
+                      <td>{product.stableKey ?? "-"}</td>
+                      <td>{product.issueCodes.map(formatIdentifier).join(", ")}</td>
+                      <td>{product.affectedAttributes.map(formatIdentifier).join(", ") || "-"}</td>
+                      <td>{product.issueCount.toLocaleString("en")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {summary.truncated ? (
+        <div className="detail-truncation-notes" role="status">
+          {summary.productsTruncated ? <p>Showing a bounded subset of affected products.</p> : null}
+          {summary.issuesTruncated ? <p>Some nested issue details were omitted for safety.</p> : null}
+          {summary.groupsTruncated ? <p>Issue groups and group attributes are bounded.</p> : null}
+        </div>
+      ) : null}
     </DetailSection>
   );
 }

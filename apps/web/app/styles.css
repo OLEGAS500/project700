@@ -1635,6 +1635,26 @@ textarea:disabled {
   background: #fcfdfc;
 }
 
+.detail-subheading {
+  margin: 24px 0 12px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.detail-truncation-notes {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.detail-truncation-notes p {
+  margin: 0;
+}
+
 .sample-table {
   min-width: 920px;
 }
