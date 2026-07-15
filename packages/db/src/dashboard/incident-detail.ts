@@ -61,12 +61,15 @@ export type DashboardIncidentDetail = {
     id: string;
     type: string;
     reason: string | null;
+    fromStatus: IncidentStatus | null;
+    toStatus: IncidentStatus | null;
     metadata: Record<string, unknown>;
     createdAt: string;
   }>;
   signals: Array<{
     id: string;
     type: string;
+    metric: string;
     source: string | null;
     metrics: Record<string, number | null>;
     evidence: { sampleCount: number };
@@ -188,12 +191,15 @@ export async function getDashboardIncidentDetail(
       id: row.id,
       type: row.event_type,
       reason: readReason(row.metadata_json) ?? nullableText(row.message),
+      fromStatus: row.from_status,
+      toStatus: row.to_status,
       metadata: redactTimelineMetadata(row.metadata_json),
       createdAt: row.created_at.toISOString()
     })),
     signals: signalResult.rows.map((row) => ({
       id: row.id,
       type: row.metric,
+      metric: row.metric,
       source: row.source,
       metrics: {
         beforeValue: toNumber(row.before_value),

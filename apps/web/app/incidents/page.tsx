@@ -257,7 +257,9 @@ function IncidentTable({ incidents }: { incidents: DashboardIncidentListItem[] }
             <tr key={incident.id}>
               <th scope="row">
                 <div className="incident-title-cell">
-                  <strong>{incident.title}</strong>
+                  <Link className="incident-detail-link" href={"/incidents/" + incident.id}>
+                    {incident.title}
+                  </Link>
                   <span>{typeLabels[incident.type]}</span>
                   <p>{incident.summary}</p>
                 </div>
