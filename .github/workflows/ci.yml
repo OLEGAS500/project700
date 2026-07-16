@@ -46,6 +46,19 @@ jobs:
           npm run seed:merchant-remediation-qa
           npm run cleanup:merchant-remediation-qa
           npm run cleanup:merchant-remediation-qa
+      - name: Smoke v0.1 demo acceptance fixture
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          npm run db:migrate
+          npm run seed:v01-demo
+          npm run seed:v01-demo
+          npm run advance:v01-demo:recovering
+          npm run advance:v01-demo:recovering
+          npm run advance:v01-demo:resolved
+          npm run advance:v01-demo:resolved
+          npm run cleanup:v01-demo
+          npm run cleanup:v01-demo
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build

@@ -180,7 +180,7 @@ export async function confirmFeedCatalogDropCandidate(
           'catalog_drop',
           'Feed product catalog drop',
           $11,
-          'feed',
+          'feed_or_publication',
           0.85,
           $12,
           $13,
