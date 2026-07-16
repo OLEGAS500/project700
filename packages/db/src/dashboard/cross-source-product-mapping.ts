@@ -1,3 +1,4 @@
+import { normalizeOfferId } from "@eim/core";
 import { merchantItemIssuesConfigurationHash } from "../incidents/merchant-item-issues";
 import { withTransaction } from "../client";
 
@@ -286,8 +287,7 @@ export async function getCrossSourceProductMatchSummary(
 }
 
 export function normalizeCrossSourceOfferId(value: string | null | undefined): string | null {
-  const normalized = value?.trim().toLowerCase();
-  return normalized || null;
+  return normalizeOfferId(value) ?? null;
 }
 
 export function normalizeCrossSourceStableKey(value: string): string | null {
@@ -362,10 +362,16 @@ function buildMappingCtes(): string {
       SELECT
         source_items.id::text AS row_id,
         'feed'::text AS side,
-        NULLIF(LOWER(BTRIM(source_items.offer_id)), '') AS offer_key,
+        NULLIF(
+          LOWER(BTRIM(REGEXP_REPLACE(source_items.offer_id, '[[:space:]]+', ' ', 'g'))),
+          ''
+        ) AS offer_key,
         NULLIF(LOWER(BTRIM(source_items.stable_key)), '') AS stable_key,
         LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key_display,
-        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id_display,
+        LEFT(
+          NULLIF(BTRIM(REGEXP_REPLACE(source_items.offer_id, '[[:space:]]+', ' ', 'g')), ''),
+          ${maximumOutputTextLength}
+        ) AS offer_id_display,
         LEFT(NULLIF(BTRIM(source_items.title), ''), ${maximumOutputTextLength}) AS title
       FROM source_items
       JOIN snapshots AS feed_snapshot
@@ -378,10 +384,16 @@ function buildMappingCtes(): string {
       SELECT
         source_items.id::text AS row_id,
         'merchant'::text AS side,
-        NULLIF(LOWER(BTRIM(source_items.offer_id)), '') AS offer_key,
+        NULLIF(
+          LOWER(BTRIM(REGEXP_REPLACE(source_items.offer_id, '[[:space:]]+', ' ', 'g'))),
+          ''
+        ) AS offer_key,
         NULLIF(LOWER(BTRIM(source_items.stable_key)), '') AS stable_key,
         LEFT(NULLIF(BTRIM(source_items.stable_key), ''), ${maximumOutputTextLength}) AS stable_key_display,
-        LEFT(NULLIF(BTRIM(source_items.offer_id), ''), ${maximumOutputTextLength}) AS offer_id_display,
+        LEFT(
+          NULLIF(BTRIM(REGEXP_REPLACE(source_items.offer_id, '[[:space:]]+', ' ', 'g')), ''),
+          ${maximumOutputTextLength}
+        ) AS offer_id_display,
         LEFT(NULLIF(BTRIM(source_items.title), ''), ${maximumOutputTextLength}) AS title
       FROM source_items
       JOIN snapshots AS merchant_snapshot

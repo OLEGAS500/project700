@@ -1,5 +1,5 @@
 import {
-  createStableProductKey,
+  normalizeOfferId,
   type SourceCheckResult,
   type SourceItemInput,
   type MerchantCenterOAuthFetch
@@ -377,9 +377,9 @@ function normalizeProduct(value: unknown, limits: NormalizedLimits): ProductNorm
     return { product: null, invalidIssueCount: 0, issueLimitReached: false, invalidProduct: true };
   }
 
-  const productName = readString(value.name, limits.maxStringLength);
-  const offerId = readString(value.offerId, limits.maxStringLength);
-  if (!productName && !offerId) {
+  const productName = readMerchantProductName(value.name, limits.maxStringLength);
+  const offerId = normalizeOfferId(readString(value.offerId, limits.maxStringLength));
+  if (!productName) {
     return { product: null, invalidIssueCount: 0, issueLimitReached: false, invalidProduct: true };
   }
 
@@ -419,9 +419,9 @@ function normalizeProduct(value: unknown, limits: NormalizedLimits): ProductNorm
     issueLimitReached = true;
   }
 
-  const stableKey = offerId
-    ? createStableProductKey({ offerId })
-    : `merchant_product:${createHash("sha256").update(productName!).digest("hex")}`;
+  // A Merchant resource name includes language/feed-label identity. Offer IDs are for matching,
+  // not for collapsing distinct provider resources before ambiguity can be evaluated.
+  const stableKey = `merchant_product:${createHash("sha256").update(productName).digest("hex")}`;
   const title = productAttributesTitle(value, limits.maxStringLength);
   const merchantStatus = readMerchantStatus(productStatus);
   const normalizedProductWithoutHash = {
@@ -884,6 +884,22 @@ function normalizeCountries(value: unknown): string[] {
 
 function readString(value: unknown, maxLength: number): string | undefined {
   return normalizeText(value, maxLength);
+}
+
+function readMerchantProductName(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const name = value.trim();
+  if (name.length === 0 || name.length > maxLength) return undefined;
+
+  const segments = name.split("/");
+  return segments.length === 4 &&
+    segments[0] === "accounts" &&
+    segments[1] &&
+    segments[2] === "products" &&
+    segments[3]
+    ? name
+    : undefined;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {

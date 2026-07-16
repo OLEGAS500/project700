@@ -5,8 +5,9 @@ import {
 } from "./cross-source-product-mapping";
 
 describe("cross-source product identity", () => {
-  it("normalizes offer IDs by trimming and lowercasing", () => {
+  it("normalizes offer IDs by trimming, collapsing whitespace, and lowercasing", () => {
     expect(normalizeCrossSourceOfferId("  SKU-ABC  ")).toBe("sku-abc");
+    expect(normalizeCrossSourceOfferId("  SKU\t  1  ")).toBe("sku 1");
   });
 
   it("keeps an absent offer distinct from the stable-key fallback", () => {

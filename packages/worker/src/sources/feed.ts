@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import type { SourceCheckResult, SourceItemInput } from "@eim/core";
-import { createStableProductKey } from "@eim/core";
+import { createStableProductKey, normalizeOfferId } from "@eim/core";
 import { XMLParser } from "fast-xml-parser";
 import { assertPublicHttpUrl } from "./url-safety";
 
@@ -442,12 +442,17 @@ function normalizeFeedItems(
 }
 
 function clipFeedItem(item: ParsedFeedItem, maxValueLength: number): ParsedFeedItem {
-  return Object.fromEntries(
+  const clipped = Object.fromEntries(
     Object.entries(item).map(([key, value]) => [
       key,
       typeof value === "string" ? value.slice(0, maxValueLength) : value
     ])
-  );
+  ) as ParsedFeedItem;
+
+  return {
+    ...clipped,
+    offerId: normalizeOfferId(clipped.offerId)
+  };
 }
 
 function parseMoney(value?: string): { amount: string; currency?: string } | undefined {

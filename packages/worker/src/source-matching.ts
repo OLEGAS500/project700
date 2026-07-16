@@ -1,13 +1,14 @@
 import type { MatchableSourceItem, SourceMatchInput } from "@eim/db";
-import { normalizeUrlForKey } from "@eim/core";
+import { normalizeOfferId, normalizeUrlForKey } from "@eim/core";
 
 export function buildSourceMatches(items: MatchableSourceItem[]): SourceMatchInput[] {
   const byKey = new Map<string, SourceMatchInput>();
 
   for (const item of items) {
-    if (item.offerId) {
+    const offerId = normalizeOfferId(item.offerId);
+    if (offerId) {
       addToMatch(byKey, {
-        key: `offer:${item.offerId.toLowerCase()}`,
+        key: `offer:${offerId}`,
         method: "offer_id",
         confidence: 0.98,
         item

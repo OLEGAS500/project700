@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createStableProductKey } from "./product-key";
+import { createStableProductKey, normalizeOfferId } from "./product-key";
 
 describe("createStableProductKey", () => {
   it("prefers offer IDs", () => {
@@ -9,6 +9,11 @@ describe("createStableProductKey", () => {
         url: "https://example.com/products/shoe?variant=1"
       })
     ).toBe("offer:sku-123");
+  });
+
+  it("canonicalizes internal offer-ID whitespace before creating an identity", () => {
+    expect(normalizeOfferId("  SKU\t  1  ")).toBe("sku 1");
+    expect(createStableProductKey({ offerId: "  SKU\t  1  " })).toBe("offer:sku 1");
   });
 
   it("normalizes product URLs", () => {
