@@ -37,11 +37,6 @@ export {
   type MerchantItemIssuesObservation
 } from "./merchant-item-issues";
 export {
-  applyFeedMerchantCorrelation,
-  type FeedMerchantCorrelationInput,
-  type FeedMerchantCorrelationResult
-} from "./feed-merchant-correlation";
-export {
   acknowledgeIncident,
   addIncidentComment,
   getIncidentDetail,

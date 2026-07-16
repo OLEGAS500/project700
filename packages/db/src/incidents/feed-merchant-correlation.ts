@@ -1,6 +1,7 @@
 import {
   calculateBaseline,
   detectFeedCatalogDrop,
+  detectMatchedStorefrontFeedLoss,
   type BaselineObservation,
   type SourceCheckStatus
 } from "@eim/core";
@@ -10,6 +11,7 @@ import {
   type CrossSourceProductMatchSummary,
   type ProductMatchSample
 } from "../dashboard/cross-source-product-mapping";
+import { getCandidateForConfirmation, type CandidateRow } from "./candidates";
 import { merchantItemIssuesConfigurationHash } from "./merchant-item-issues";
 import { upsertIncidentSignal } from "./signals";
 
@@ -32,9 +34,11 @@ type CorrelationSnapshotRow = {
 };
 
 type SourceCheckRow = {
+  id: string;
   source: string;
   check_key: string;
   status: SourceCheckStatus;
+  finished_at: Date | null;
   metadata_json: Record<string, unknown>;
 };
 
@@ -44,12 +48,29 @@ type MerchantBaselineRow = {
   metadata_json: Record<string, unknown>;
 };
 
-export type FeedMerchantCorrelationInput = {
+type CorrelationIncidentRow = {
+  id: string;
+  store_id: string;
+  status: string;
+};
+
+type CorrelatedMappingEvaluation = {
+  reason: "correlated";
+  identityDecision: Extract<
+    ReturnType<typeof detectMatchedStorefrontFeedLoss>,
+    { isDrop: true }
+  >;
+};
+
+type MappingEvaluation =
+  | CorrelatedMappingEvaluation
+  | {
+      reason: Exclude<FeedMerchantCorrelationResult["reason"], "correlated">;
+    };
+
+type FeedMerchantCorrelationInput = {
   incidentId: string;
-  storeId: string;
-  observedSnapshotId: string;
-  feedBaselineMedian: number;
-  thresholds: Record<string, unknown> | null | undefined;
+  candidateId: string;
 };
 
 export type FeedMerchantCorrelationResult = {
@@ -57,6 +78,7 @@ export type FeedMerchantCorrelationResult = {
   reason:
     | "correlated"
     | "already_recorded"
+    | "candidate_context_unavailable"
     | "incident_unavailable"
     | "captured_thresholds_invalid"
     | "snapshot_or_configuration_unavailable"
@@ -66,6 +88,8 @@ export type FeedMerchantCorrelationResult = {
     | "mapping_incompatible"
     | "mapping_ambiguous"
     | "mapping_truncated"
+    | "mapping_feed_count_mismatch"
+    | "mapping_identity_loss_not_confirmed"
     | "mapping_has_no_merchant_only_products"
     | "feed_drop_not_confirmed";
 };
@@ -74,12 +98,45 @@ export async function applyFeedMerchantCorrelation(
   client: pg.PoolClient,
   input: FeedMerchantCorrelationInput
 ): Promise<FeedMerchantCorrelationResult> {
-  const thresholds = readCapturedThresholds(input.thresholds);
+  const candidate = await getCandidateForConfirmation(client, input.candidateId);
+  if (
+    !candidate ||
+    candidate.type !== "catalog_drop" ||
+    !candidate.confirmation_snapshot_id ||
+    (candidate.status !== "pending_confirmation" && candidate.status !== "confirmed")
+  ) {
+    return { correlated: false, reason: "candidate_context_unavailable" };
+  }
+
+  const incidentRow = await lockCorrelationIncident(client, input.incidentId, candidate);
+  if (!incidentRow || incidentRow.status === "ignored" || incidentRow.status === "resolved") {
+    return { correlated: false, reason: "incident_unavailable" };
+  }
+
+  const existingEvent = await client.query<{ id: string }>(
+    `
+      SELECT id
+      FROM incident_events
+      WHERE incident_id = $1
+        AND event_type = 'feed_merchant_correlation_confirmed'
+      LIMIT 1
+    `,
+    [incidentRow.id]
+  );
+  if (existingEvent.rows[0]) {
+    return { correlated: true, reason: "already_recorded" };
+  }
+
+  const thresholds = readCapturedThresholds(candidate.thresholds_json);
   if (!thresholds) {
     return { correlated: false, reason: "captured_thresholds_invalid" };
   }
 
-  const snapshot = await lockCorrelationSnapshot(client, input.storeId, input.observedSnapshotId);
+  const snapshot = await lockCorrelationSnapshot(
+    client,
+    candidate.store_id,
+    candidate.first_snapshot_id
+  );
   if (
     !snapshot ||
     snapshot.snapshot_status !== "completed" ||
@@ -93,8 +150,8 @@ export async function applyFeedMerchantCorrelation(
   );
   const checks = await lockCorrelationSourceChecks(
     client,
-    input.storeId,
-    input.observedSnapshotId
+    candidate.store_id,
+    candidate.first_snapshot_id
   );
   const correlationChecks = getCompleteCorrelationChecks(checks, configurationHash);
   if (!correlationChecks) {
@@ -111,7 +168,7 @@ export async function applyFeedMerchantCorrelation(
 
   const feedDecision = detectFeedCatalogDrop({
     currentCount: currentFeedCount,
-    baselineMedian: input.feedBaselineMedian,
+    baselineMedian: Number(candidate.baseline_median),
     percentThreshold: thresholds.percentThreshold,
     absoluteThreshold: thresholds.absoluteThreshold
   });
@@ -120,9 +177,11 @@ export async function applyFeedMerchantCorrelation(
   }
 
   const merchantBaselineRows = await lockMerchantApprovedBaselineRows(client, {
-    storeId: input.storeId,
-    observedSnapshotId: input.observedSnapshotId,
-    observedAt: snapshot.created_at,
+    storeId: candidate.store_id,
+    observedSnapshotId: candidate.first_snapshot_id,
+    observedStatusCheckAt: correlationChecks.statusCheck.finished_at,
+    observedSnapshotCreatedAt: snapshot.created_at,
+    observedStatusCheckId: correlationChecks.statusCheck.id,
     configurationHash
   });
   const merchantBaselineObservations: BaselineObservation[] = [];
@@ -159,38 +218,18 @@ export async function applyFeedMerchantCorrelation(
   }
 
   const mapping = await getCrossSourceProductMatchSummary({
-    feedSnapshotId: input.observedSnapshotId,
-    merchantSnapshotId: input.observedSnapshotId
+    feedSnapshotId: candidate.first_snapshot_id,
+    merchantSnapshotId: candidate.first_snapshot_id
   });
-  const mappingDecision = evaluateMapping(mapping);
-  if (mappingDecision !== "correlated" || !mapping) {
-    return { correlated: false, reason: mappingDecision };
-  }
-
-  const incident = await client.query<{
-    id: string;
-    store_id: string;
-    status: "open" | "investigating" | "acknowledged" | "recovering" | "resolved" | "ignored";
-  }>(
-    `
-      SELECT id, store_id, status
-      FROM incidents
-      WHERE id = $1
-        AND store_id = $2
-        AND type = 'catalog_drop'
-      FOR UPDATE
-    `,
-    [input.incidentId, input.storeId]
-  );
-  const incidentRow = incident.rows[0];
-  if (!incidentRow || incidentRow.status === "ignored" || incidentRow.status === "resolved") {
-    return { correlated: false, reason: "incident_unavailable" };
+  const mappingEvaluation = evaluateMapping(mapping, currentFeedCount, thresholds);
+  if (mappingEvaluation.reason !== "correlated" || !mapping) {
+    return { correlated: false, reason: mappingEvaluation.reason };
   }
 
   const mappingSamples = mapEvidenceSamples(mapping.samples.merchantOnly);
   const evidence = {
     reason: "complete comparable Merchant approved-product decline corroborated feed catalog drop",
-    feedBaselineMedian: input.feedBaselineMedian,
+    feedBaselineMedian: Number(candidate.baseline_median),
     feedCurrentCount: currentFeedCount,
     feedChangeAbs: feedDecision.changeAbs,
     feedChangePct: feedDecision.changePct,
@@ -204,7 +243,14 @@ export async function applyFeedMerchantCorrelation(
       matchedCount: mapping.matchedCount,
       feedOnlyCount: mapping.feedOnlyCount,
       merchantOnlyCount: mapping.merchantOnlyCount,
-      ambiguousCount: mapping.ambiguousCount
+      ambiguousCount: mapping.ambiguousCount,
+      reconciledFeedCount: mapping.matchedCount + mapping.feedOnlyCount,
+      identityLoss: {
+        matchedMerchantInventory: mapping.matchedCount,
+        missingFromFeedCount: mapping.merchantOnlyCount,
+        changeAbs: mappingEvaluation.identityDecision.changeAbs,
+        changePct: mappingEvaluation.identityDecision.changePct
+      }
     },
     thresholds: {
       percentThreshold: thresholds.percentThreshold,
@@ -225,15 +271,15 @@ export async function applyFeedMerchantCorrelation(
         created_at
       )
       VALUES ($1, $2, $3, 'feed_merchant_correlation_confirmed', $4, $4, $5, $6::jsonb, clock_timestamp())
-      ON CONFLICT (incident_id, event_type, snapshot_id)
-      WHERE snapshot_id IS NOT NULL
+      ON CONFLICT (incident_id)
+      WHERE event_type = 'feed_merchant_correlation_confirmed'
       DO NOTHING
       RETURNING id
     `,
     [
       incidentRow.id,
       incidentRow.store_id,
-      input.observedSnapshotId,
+      candidate.first_snapshot_id,
       incidentRow.status,
       "Complete Merchant Center evidence corroborated the feed catalog drop.",
       JSON.stringify(evidence)
@@ -276,17 +322,53 @@ export async function applyFeedMerchantCorrelation(
     incidentId: incidentRow.id,
     source: "feed_vs_merchant_center",
     metric: "merchant_inventory_missing_from_feed",
-    beforeValue: mapping.matchedCount + mapping.merchantOnlyCount,
+    beforeValue: mapping.matchedCount,
     afterValue: mapping.merchantOnlyCount,
-    changeAbs: mapping.merchantOnlyCount,
-    changePct:
-      mapping.matchedCount + mapping.merchantOnlyCount === 0
-        ? 0
-        : mapping.merchantOnlyCount / (mapping.matchedCount + mapping.merchantOnlyCount),
+    changeAbs: mappingEvaluation.identityDecision.changeAbs,
+    changePct: mappingEvaluation.identityDecision.changePct,
     sampleItems: mappingSamples
   });
 
   return { correlated: true, reason: "correlated" };
+}
+
+async function lockCorrelationIncident(
+  client: pg.PoolClient,
+  incidentId: string,
+  candidate: CandidateRow
+): Promise<CorrelationIncidentRow | null> {
+  const result = await client.query<CorrelationIncidentRow>(
+    `
+      SELECT id, store_id, status::text
+      FROM incidents
+      WHERE id = $1
+        AND catalog_drop_candidate_id = $2
+        AND store_id = $3
+        AND type = 'catalog_drop'
+        AND baseline_metric_id = $4
+        AND baseline_version = $5
+        AND baseline_median = $6
+        AND configuration_hash = $7
+        AND before_value = $8
+        AND thresholds_json = $9::jsonb
+        AND opened_snapshot_id = $10
+      FOR UPDATE
+    `,
+    [
+      incidentId,
+      candidate.id,
+      candidate.store_id,
+      candidate.baseline_metric_id,
+      candidate.baseline_version,
+      candidate.baseline_median,
+      candidate.configuration_hash,
+      candidate.before_value,
+      JSON.stringify(candidate.thresholds_json),
+      candidate.confirmation_snapshot_id
+    ]
+  );
+
+  return result.rows[0] ?? null;
 }
 
 async function lockCorrelationSnapshot(
@@ -322,7 +404,7 @@ async function lockCorrelationSourceChecks(
 ): Promise<SourceCheckRow[]> {
   const result = await client.query<SourceCheckRow>(
     `
-      SELECT source::text, check_key, status::text, metadata_json
+      SELECT id, source::text, check_key, status::text, finished_at, metadata_json
       FROM source_checks
       WHERE snapshot_id = $2
         AND store_id = $1
@@ -338,7 +420,7 @@ async function lockCorrelationSourceChecks(
 function getCompleteCorrelationChecks(
   checks: SourceCheckRow[],
   configurationHash: string
-): { statusCheck: SourceCheckRow } | null {
+): { statusCheck: SourceCheckRow & { finished_at: Date } } | null {
   const feedChecks = checks.filter((check) => check.source === "feed" && check.status === "success");
   const statusChecks = checks.filter((check) =>
     check.source === "merchant_center" &&
@@ -356,11 +438,18 @@ function getCompleteCorrelationChecks(
     readText(check.metadata_json.merchantItemIssuesConfigurationHash) === configurationHash
   );
 
-  if (feedChecks.length !== 1 || statusChecks.length !== 1 || identityChecks.length !== 1) {
+  if (
+    feedChecks.length !== 1 ||
+    statusChecks.length !== 1 ||
+    identityChecks.length !== 1
+  ) {
     return null;
   }
 
-  return { statusCheck: statusChecks[0] };
+  const statusCheck = statusChecks[0];
+  if (!statusCheck || !isValidDate(statusCheck.finished_at)) return null;
+
+  return { statusCheck: { ...statusCheck, finished_at: statusCheck.finished_at } };
 }
 
 async function lockMerchantApprovedBaselineRows(
@@ -368,40 +457,67 @@ async function lockMerchantApprovedBaselineRows(
   input: {
     storeId: string;
     observedSnapshotId: string;
-    observedAt: Date;
+    observedStatusCheckAt: Date;
+    observedSnapshotCreatedAt: Date;
+    observedStatusCheckId: string;
     configurationHash: string;
   }
 ): Promise<MerchantBaselineRow[]> {
   const result = await client.query<MerchantBaselineRow>(
     `
+      WITH comparable_observations AS (
+        SELECT DISTINCT ON (snapshots.id)
+          snapshots.id AS snapshot_id,
+          snapshots.created_at AS snapshot_created_at,
+          status_check.id AS status_check_id,
+          identity_check.id AS identity_check_id,
+          status_check.finished_at AS observed_at
+        FROM snapshots
+        JOIN source_checks AS status_check
+          ON status_check.snapshot_id = snapshots.id
+         AND status_check.store_id = snapshots.store_id
+         AND status_check.source = 'merchant_center'
+         AND status_check.status = 'success'
+         AND status_check.metadata_json ->> 'merchantStatusAggregationVersion' = $2
+         AND status_check.metadata_json ->> 'merchantCenterConfigurationHash' = $3
+        JOIN source_checks AS identity_check
+          ON identity_check.snapshot_id = snapshots.id
+         AND identity_check.store_id = snapshots.store_id
+         AND identity_check.source = 'merchant_center'
+         AND identity_check.check_key = $4
+         AND identity_check.status = 'success'
+         AND identity_check.metadata_json ->> 'merchantItemIssuesVersion' = $5
+         AND identity_check.metadata_json ->> 'merchantProductIdentityVersion' = $6
+         AND identity_check.metadata_json ->> 'merchantItemIssuesConfigurationHash' = $3
+         AND identity_check.metadata_json ->> 'merchantProductIdentityComplete' = 'true'
+        WHERE snapshots.store_id = $1
+          AND snapshots.id <> $7
+          AND snapshots.status = 'completed'
+          AND status_check.finished_at IS NOT NULL
+          AND (status_check.finished_at, snapshots.created_at, status_check.id) <
+            ($8::timestamptz, $9::timestamptz, $10::uuid)
+        ORDER BY snapshots.id, status_check.finished_at DESC, status_check.id DESC
+      ),
+      bounded_observations AS (
+        SELECT *
+        FROM comparable_observations
+        ORDER BY observed_at DESC, snapshot_created_at DESC, status_check_id DESC
+        LIMIT $11
+      )
       SELECT
         snapshots.id AS snapshot_id,
-        COALESCE(snapshots.finished_at, snapshots.created_at) AS observed_at,
+        status_check.finished_at AS observed_at,
         status_check.metadata_json
-      FROM snapshots
+      FROM bounded_observations
+      JOIN snapshots ON snapshots.id = bounded_observations.snapshot_id
       JOIN source_checks AS status_check
-        ON status_check.snapshot_id = snapshots.id
-       AND status_check.store_id = snapshots.store_id
-       AND status_check.source = 'merchant_center'
-       AND status_check.status = 'success'
-       AND status_check.metadata_json ->> 'merchantStatusAggregationVersion' = $2
-       AND status_check.metadata_json ->> 'merchantCenterConfigurationHash' = $3
+        ON status_check.id = bounded_observations.status_check_id
       JOIN source_checks AS identity_check
-        ON identity_check.snapshot_id = snapshots.id
-       AND identity_check.store_id = snapshots.store_id
-       AND identity_check.source = 'merchant_center'
-       AND identity_check.check_key = $4
-       AND identity_check.status = 'success'
-       AND identity_check.metadata_json ->> 'merchantItemIssuesVersion' = $5
-       AND identity_check.metadata_json ->> 'merchantProductIdentityVersion' = $6
-       AND identity_check.metadata_json ->> 'merchantItemIssuesConfigurationHash' = $3
-       AND identity_check.metadata_json ->> 'merchantProductIdentityComplete' = 'true'
-      WHERE snapshots.store_id = $1
-        AND snapshots.id <> $7
-        AND snapshots.status = 'completed'
-        AND (snapshots.created_at, snapshots.id) < ($8::timestamptz, $7::uuid)
-      ORDER BY snapshots.created_at DESC, snapshots.id DESC
-      LIMIT $9
+        ON identity_check.id = bounded_observations.identity_check_id
+      ORDER BY
+        bounded_observations.observed_at DESC,
+        bounded_observations.snapshot_created_at DESC,
+        bounded_observations.status_check_id DESC
       FOR SHARE OF snapshots, status_check, identity_check
     `,
     [
@@ -412,7 +528,9 @@ async function lockMerchantApprovedBaselineRows(
       merchantItemIssuesVersion,
       merchantProductIdentityVersion,
       input.observedSnapshotId,
-      input.observedAt,
+      input.observedStatusCheckAt,
+      input.observedSnapshotCreatedAt,
+      input.observedStatusCheckId,
       merchantBaselineMaximumSamples
     ]
   );
@@ -421,13 +539,31 @@ async function lockMerchantApprovedBaselineRows(
 }
 
 function evaluateMapping(
-  mapping: CrossSourceProductMatchSummary | null
-): FeedMerchantCorrelationResult["reason"] {
-  if (!mapping || !mapping.comparable) return "mapping_incompatible";
-  if (mapping.ambiguousCount > 0) return "mapping_ambiguous";
-  if (mapping.countsTruncated) return "mapping_truncated";
-  if (mapping.merchantOnlyCount === 0) return "mapping_has_no_merchant_only_products";
-  return "correlated";
+  mapping: CrossSourceProductMatchSummary | null,
+  currentFeedCount: number,
+  thresholds: { percentThreshold: number; absoluteThreshold: number }
+): MappingEvaluation {
+  if (!mapping || !mapping.comparable) return { reason: "mapping_incompatible" };
+  if (mapping.ambiguousCount > 0) return { reason: "mapping_ambiguous" };
+  if (mapping.countsTruncated) return { reason: "mapping_truncated" };
+  if (mapping.matchedCount + mapping.feedOnlyCount !== currentFeedCount) {
+    return { reason: "mapping_feed_count_mismatch" };
+  }
+  if (mapping.merchantOnlyCount === 0) {
+    return { reason: "mapping_has_no_merchant_only_products" };
+  }
+
+  const identityDecision = detectMatchedStorefrontFeedLoss({
+    matchedStorefrontCount: mapping.matchedCount,
+    missingFromFeedCount: mapping.merchantOnlyCount,
+    percentThreshold: thresholds.percentThreshold,
+    absoluteThreshold: thresholds.absoluteThreshold
+  });
+  if (!identityDecision.isDrop) {
+    return { reason: "mapping_identity_loss_not_confirmed" };
+  }
+
+  return { reason: "correlated", identityDecision };
 }
 
 function mapEvidenceSamples(samples: ProductMatchSample[]): Array<{
@@ -496,4 +632,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readText(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function isValidDate(value: Date | null | undefined): value is Date {
+  return value instanceof Date && !Number.isNaN(value.getTime());
 }

@@ -153,6 +153,7 @@ export async function confirmFeedCatalogDropCandidate(
       `
         INSERT INTO incidents (
           store_id,
+          catalog_drop_candidate_id,
           baseline_metric_id,
           baseline_version,
           baseline_median,
@@ -174,15 +175,15 @@ export async function confirmFeedCatalogDropCandidate(
           status
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           'critical',
           'catalog_drop',
           'Feed product catalog drop',
-          $10,
+          $11,
           'feed',
           0.85,
-          $11,
           $12,
+          $13,
           now(),
           now(),
           'open'
@@ -191,6 +192,7 @@ export async function confirmFeedCatalogDropCandidate(
       `,
       [
         candidate.store_id,
+        candidate.id,
         candidate.baseline_metric_id,
         candidate.baseline_version,
         candidate.baseline_median,
@@ -206,6 +208,21 @@ export async function confirmFeedCatalogDropCandidate(
     );
     const incidentId = incident.rows[0].id;
 
+    const boundCandidate = await client.query<CandidateRow>(
+      `
+        UPDATE incident_candidates
+        SET confirmation_snapshot_id = $2,
+            updated_at = now()
+        WHERE id = $1
+          AND status = 'pending_confirmation'
+        RETURNING *
+      `,
+      [candidateId, confirmationSnapshotId]
+    );
+    if (!boundCandidate.rows[0]) {
+      throw new Error(`Pending candidate ${candidateId} could not be bound to its incident`);
+    }
+
     await upsertIncidentSignal(client, {
       incidentId,
       source: "feed",
@@ -217,10 +234,7 @@ export async function confirmFeedCatalogDropCandidate(
     });
     await applyFeedMerchantCorrelation(client, {
       incidentId,
-      storeId: candidate.store_id,
-      observedSnapshotId: candidate.first_snapshot_id,
-      feedBaselineMedian: Number(candidate.baseline_median),
-      thresholds: candidate.thresholds_json
+      candidateId: candidate.id
     });
     await createIncidentOpenedAlertDelivery(client, {
       incidentId,
@@ -261,16 +275,21 @@ async function findIncidentForCandidate(
     `
       SELECT id
       FROM incidents
-      WHERE store_id = $1
-        AND type = 'catalog_drop'
-        AND baseline_metric_id = $2
-        AND baseline_version = $3
-        AND configuration_hash = $4
-        AND opened_snapshot_id = $5
+      WHERE catalog_drop_candidate_id = $1
+         OR (
+          catalog_drop_candidate_id IS NULL
+          AND store_id = $2
+          AND type = 'catalog_drop'
+          AND baseline_metric_id = $3
+          AND baseline_version = $4
+          AND configuration_hash = $5
+          AND opened_snapshot_id = $6
+        )
       ORDER BY created_at DESC
       LIMIT 1
     `,
     [
+      candidate.id,
       candidate.store_id,
       candidate.baseline_metric_id,
       candidate.baseline_version,
