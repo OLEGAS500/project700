@@ -38,6 +38,7 @@ type Command = "seed" | "recovering" | "resolved" | "cleanup";
 type FixtureStore = {
   storeId: string;
   incidentId: string;
+  candidateId: string;
   firstDropSnapshotId: string;
   confirmationSnapshotId: string;
 };
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     const mainStore = await seedMainStore(clock);
     const sourceHealthStore = await seedSourceHealthStore(clock);
     await assertSeedAcceptance(mainStore, sourceHealthStore.storeId);
-    printSeedSummary(mainStore, sourceHealthStore);
+    await printSeedSummary(mainStore, sourceHealthStore);
     console.log(`Previous fixture stores removed: ${removed}`);
     return;
   }
@@ -186,6 +187,7 @@ async function seedMainStore(clock: FixtureClock): Promise<FixtureStore> {
   return {
     storeId: created.store.id,
     incidentId,
+    candidateId: candidate.id,
     firstDropSnapshotId: firstDrop.id,
     confirmationSnapshotId: confirmation.id
   };
@@ -805,21 +807,28 @@ function requireValue<T>(value: T, message: string): NonNullable<T> {
   return value;
 }
 
-function printSeedSummary(
+async function printSeedSummary(
   mainStore: FixtureStore,
   sourceHealthStore: { storeId: string; incidentId: string }
-): void {
+): Promise<void> {
   const webBaseUrl = (process.env.WEB_BASE_URL?.trim() || defaultWebBaseUrl).replace(/\/$/, "");
+  const currentIncident = requireValue(
+    await getIncidentDetail(mainStore.incidentId),
+    "Catalog-drop detail model is unavailable while printing the fixture summary."
+  );
   console.log("v0.1 reproducible demo fixture is ready.");
   console.log(`Fixture version: ${fixtureVersion}`);
   console.log(`Catalog-drop store: ${mainStore.storeId}`);
   console.log(`Catalog-drop incident: ${mainStore.incidentId}`);
   console.log(`Catalog-drop incident URL: ${webBaseUrl}/incidents/${mainStore.incidentId}`);
+  console.log(`Catalog-drop candidate: ${mainStore.candidateId}`);
+  console.log(`Catalog-drop current status: ${currentIncident.status}`);
   console.log(`Dashboard URL: ${webBaseUrl}/dashboard`);
   console.log(`First drop snapshot: ${mainStore.firstDropSnapshotId}`);
   console.log(`Confirmation snapshot: ${mainStore.confirmationSnapshotId}`);
   console.log(`Source-health store: ${sourceHealthStore.storeId}`);
   console.log(`Source-health incident: ${sourceHealthStore.incidentId}`);
+  console.log(`Source-health incident URL: ${webBaseUrl}/incidents/${sourceHealthStore.incidentId}`);
   console.log("Next: npm run advance:v01-demo:recovering, then npm run advance:v01-demo:resolved.");
   console.log("Cleanup: npm run cleanup:v01-demo");
 }
