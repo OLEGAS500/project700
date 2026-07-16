@@ -56,26 +56,34 @@ function result(
   items: SourceItemInput[],
   overrides: Partial<SourceCheckResult> = {}
 ): SourceCheckResult {
+  const status = overrides.status ?? "success";
+  const metadata = {
+    merchantItemIssuesVersion: "v1",
+    merchantProductIdentityVersion: "v1",
+    merchantProductIdentityComplete: status === "success",
+    merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash("123"),
+    productsSeen: items.length,
+    productsWithIssues: items.length,
+    issuesObserved: items.length,
+    pagination: { pagesFetched: 1, complete: status === "success" }
+  };
+
   return {
     source: "merchant_center",
     url,
-    status: "success",
+    status,
     startedAt: "2026-07-15T12:00:00.000Z",
     finishedAt: "2026-07-15T12:00:01.000Z",
     durationMs: 1_000,
     itemsObserved: items.length,
     totalItemsSeen: items.length,
-    skippedItems: 0,
+    skippedItems: status === "success" ? 0 : 1,
     items,
+    ...overrides,
     metadata: {
-      merchantItemIssuesVersion: "v1",
-      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash("123"),
-      productsSeen: items.length,
-      productsWithIssues: items.length,
-      issuesObserved: items.length,
-      pagination: { pagesFetched: 1, complete: true }
-    },
-    ...overrides
+      ...metadata,
+      ...(overrides.metadata ?? {})
+    }
   };
 }
 

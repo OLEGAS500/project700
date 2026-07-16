@@ -1,4 +1,4 @@
-import type { BaselineRole, SourceCheckResult } from "@eim/core";
+import type { BaselineRole, SourceCheckResult, SourceItemInput } from "@eim/core";
 import type pg from "pg";
 import { getPool, withTransaction } from "./client";
 
@@ -26,6 +26,9 @@ type SnapshotRow = {
 const merchantItemIssuesCheckKey = "merchant_center:item_issues";
 const merchantItemIssuesVersion = "v1";
 const merchantItemIssuesConfigurationHashKey = "merchantItemIssuesConfigurationHash";
+export const merchantProductIdentityDataKind = "product_identity";
+export const merchantProductIdentityVersion = "v1";
+const merchantItemIssuesDataKind = "item_issues";
 
 export type SnapshotRecord = {
   id: string;
@@ -204,24 +207,35 @@ export async function persistMerchantCenterItemIssuesResult(
       [snapshotId, storeId, merchantItemIssuesVersion, merchantItemIssuesCheckKey]
     );
 
-    if (result.status === "success") {
+    const completeIdentityInventory = hasCompleteMerchantProductIdentityInventory(result);
+
+    if (completeIdentityInventory) {
       await client.query(
         `
           DELETE FROM source_items
           WHERE snapshot_id = $1
             AND store_id = $2
             AND source = 'merchant_center'
-            AND metadata_json ->> 'merchantDataKind' = 'item_issues'
+            AND metadata_json ->> 'merchantDataKind' IN ($3, $4)
         `,
-        [snapshotId, storeId]
+        [snapshotId, storeId, merchantItemIssuesDataKind, merchantProductIdentityDataKind]
       );
     }
+
+    const items = completeIdentityInventory
+      ? result.items.map((item) => toMerchantProductIdentityItem(item, incomingConfigurationHash))
+      : result.items
+          .filter(hasMerchantIssues)
+          .map((item) => toMerchantItemIssueItem(item, incomingConfigurationHash));
 
     return persistSourceCheckResultWithClient(
       client,
       snapshotId,
       storeId,
-      result,
+      {
+        ...result,
+        items
+      },
       merchantItemIssuesCheckKey
     );
   });
@@ -253,6 +267,46 @@ function readMerchantItemIssuesConfigurationHash(
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
 }
 
+function hasCompleteMerchantProductIdentityInventory(result: SourceCheckResult): boolean {
+  return (
+    result.source === "merchant_center" &&
+    result.status === "success" &&
+    result.metadata?.merchantProductIdentityVersion === merchantProductIdentityVersion &&
+    result.metadata?.merchantProductIdentityComplete === true
+  );
+}
+
+function hasMerchantIssues(item: SourceItemInput): boolean {
+  return Array.isArray(item.merchantIssues) && item.merchantIssues.length > 0;
+}
+
+function toMerchantProductIdentityItem(
+  item: SourceItemInput,
+  configurationHash: string
+): SourceItemInput {
+  return {
+    ...item,
+    metadata: {
+      merchantDataKind: merchantProductIdentityDataKind,
+      merchantProductIdentityVersion,
+      [merchantItemIssuesConfigurationHashKey]: configurationHash
+    }
+  };
+}
+
+function toMerchantItemIssueItem(
+  item: SourceItemInput,
+  configurationHash: string
+): SourceItemInput {
+  return {
+    ...item,
+    metadata: {
+      merchantDataKind: merchantItemIssuesDataKind,
+      [merchantItemIssuesConfigurationHashKey]: configurationHash
+    }
+  };
+}
+
 async function persistSourceCheckResultWithClient(
   client: pg.PoolClient,
   snapshotId: string,
@@ -260,6 +314,9 @@ async function persistSourceCheckResultWithClient(
   result: SourceCheckResult,
   checkKey = result.url ?? result.source
 ): Promise<SnapshotRecord> {
+    const preserveMerchantProductIdentity =
+      result.source === "merchant_center" && !hasCompleteMerchantProductIdentityInventory(result);
+
     await client.query(
       `
         UPDATE snapshots
@@ -343,7 +400,8 @@ async function persistSourceCheckResultWithClient(
         snapshotId,
         item.source,
         item.stableKey,
-        item.metadata ?? {}
+        item.metadata ?? {},
+        preserveMerchantProductIdentity
       );
       const merchantIssues = await getMerchantIssuesForPersistence(
         client,
@@ -515,7 +573,8 @@ async function getMergedSourceItemMetadata(
   snapshotId: string,
   source: string,
   stableKey: string | undefined,
-  nextMetadata: Record<string, unknown>
+  nextMetadata: Record<string, unknown>,
+  preserveMerchantProductIdentity = false
 ): Promise<Record<string, unknown>> {
   if (!stableKey) {
     return nextMetadata;
@@ -531,7 +590,21 @@ async function getMergedSourceItemMetadata(
     [snapshotId, source, stableKey]
   );
 
-  return mergeMetadata(existing.rows[0]?.metadata_json ?? {}, nextMetadata);
+  const currentMetadata = existing.rows[0]?.metadata_json ?? {};
+  const merged = mergeMetadata(currentMetadata, nextMetadata);
+
+  if (
+    preserveMerchantProductIdentity &&
+    currentMetadata.merchantDataKind === merchantProductIdentityDataKind &&
+    nextMetadata.merchantDataKind === merchantItemIssuesDataKind
+  ) {
+    merged.merchantDataKind = merchantProductIdentityDataKind;
+    merged.merchantProductIdentityVersion = currentMetadata.merchantProductIdentityVersion;
+    merged[merchantItemIssuesConfigurationHashKey] =
+      currentMetadata[merchantItemIssuesConfigurationHashKey];
+  }
+
+  return merged;
 }
 
 async function getMerchantIssuesForPersistence(

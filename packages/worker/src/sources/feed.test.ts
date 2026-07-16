@@ -29,7 +29,7 @@ describe("collectFeed", () => {
     expect(result.itemsObserved).toBe(1);
     expect(result.items[0]).toMatchObject({
       stableKey: "offer:sku-1",
-      offerId: "SKU-1",
+      offerId: "sku-1",
       price: "79.00",
       currency: "USD",
       availability: "in stock"
@@ -39,6 +39,28 @@ describe("collectFeed", () => {
       salePrice: "79.00",
       effectivePrice: "79.00",
       priceSemantics: "effective_price"
+    });
+  });
+
+  it("canonicalizes offer-ID whitespace for cross-source identity matching", async () => {
+    const result = await collectFeed({
+      url: "https://example.com/feed.xml",
+      fetchImpl: async () =>
+        new Response(`
+          <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
+            <channel>
+              <item>
+                <g:id>  SKU\t  1  </g:id>
+                <g:link>https://example.com/products/sku-1</g:link>
+              </item>
+            </channel>
+          </rss>
+        `)
+    });
+
+    expect(result.items[0]).toMatchObject({
+      stableKey: "offer:sku 1",
+      offerId: "sku 1"
     });
   });
 
@@ -83,7 +105,7 @@ describe("collectFeed", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(result.items[0].offerId).toBe("PREFIX-1");
+    expect(result.items[0].offerId).toBe("prefix-1");
   });
 
   it("supports gzipped feeds", async () => {

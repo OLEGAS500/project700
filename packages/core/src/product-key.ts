@@ -10,9 +10,15 @@ type ProductKeyInput = {
   price?: string | null;
 };
 
+export function normalizeOfferId(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().replace(/\s+/g, " ");
+  return normalized ? normalized.toLowerCase() : undefined;
+}
+
 export function createStableProductKey(input: ProductKeyInput): string {
-  if (input.offerId?.trim()) {
-    return `offer:${input.offerId.trim().toLowerCase()}`;
+  const offerId = normalizeOfferId(input.offerId);
+  if (offerId) {
+    return `offer:${offerId}`;
   }
 
   if (input.url?.trim()) {

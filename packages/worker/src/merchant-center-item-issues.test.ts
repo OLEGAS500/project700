@@ -121,8 +121,8 @@ describe("collectMerchantCenterItemIssues", () => {
       skippedItems: 0
     });
     expect(result.items[0]).toMatchObject({
-      stableKey: "offer:sku-1",
-      offerId: "SKU-1",
+      stableKey: expect.stringMatching(/^merchant_product:[0-9a-f]{64}$/),
+      offerId: "sku-1",
       merchantStatus: "approved",
       merchantIssues: [
         {
@@ -175,6 +175,48 @@ describe("collectMerchantCenterItemIssues", () => {
     expect(result.totalItemsSeen).toBe(2);
     expect(calls).toHaveLength(2);
     expect(result.metadata).toMatchObject({ pagination: { pagesFetched: 2, complete: true } });
+  });
+
+  it("preserves distinct Merchant resources that share one offer ID", async () => {
+    const result = await collectMerchantCenterItemIssues({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            products: [
+              product("SKU-1", [issue()], "accounts/123/products/en~US~sku-1"),
+              product(
+                "SKU-1",
+                [issue({ code: "missing_price" })],
+                "accounts/123/products/de~DE~sku-1"
+              )
+            ]
+          }),
+          { status: 200 }
+        ),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      totalItemsSeen: 2,
+      itemsObserved: 2
+    });
+    expect(result.items).toHaveLength(2);
+    expect(new Set(result.items.map((item) => item.stableKey)).size).toBe(2);
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          offerId: "sku-1",
+          merchantIssues: [expect.objectContaining({ code: "invalid_gtin" })]
+        }),
+        expect.objectContaining({
+          offerId: "sku-1",
+          merchantIssues: [expect.objectContaining({ code: "missing_price" })]
+        })
+      ])
+    );
   });
 
   it("returns partial on a repeated token without exposing it", async () => {
@@ -271,6 +313,63 @@ describe("collectMerchantCenterItemIssues", () => {
       itemsObserved: 0,
       totalItemsSeen: 0,
       skippedItems: 0
+    });
+  });
+
+  it("emits a complete product identity inventory when no products have issues", async () => {
+    const result = await collectMerchantCenterItemIssues({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ products: [product("HEALTHY-1", [])] }), { status: 200 }),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      itemsObserved: 0,
+      totalItemsSeen: 1,
+      items: [
+        expect.objectContaining({
+          stableKey: expect.stringMatching(/^merchant_product:[0-9a-f]{64}$/),
+          offerId: "healthy-1",
+          metadata: expect.objectContaining({
+            merchantDataKind: "product_identity",
+            merchantProductIdentityVersion: "v1",
+            merchantItemIssuesConfigurationHash: expect.any(String)
+          })
+        })
+      ],
+      metadata: expect.objectContaining({
+        merchantProductIdentityVersion: "v1",
+        merchantProductIdentityComplete: true,
+        productsWithIssues: 0
+      })
+    });
+    expect(result.items[0]?.merchantIssues).toBeUndefined();
+  });
+
+  it("marks the inventory partial when a product resource identity is missing", async () => {
+    const result = await collectMerchantCenterItemIssues({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ products: [product("SKU-1", [], "invalid-product-name")] }),
+          { status: 200 }
+        ),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "partial",
+      errorCode: "merchant_product_invalid",
+      totalItemsSeen: 1,
+      skippedItems: 1,
+      items: [],
+      metadata: {
+        merchantProductIdentityComplete: false
+      }
     });
   });
 

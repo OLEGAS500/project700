@@ -1,5 +1,5 @@
 import {
-  createStableProductKey,
+  normalizeOfferId,
   type SourceCheckResult,
   type SourceItemInput,
   type MerchantCenterOAuthFetch
@@ -8,6 +8,8 @@ import {
   createQueuedSnapshot,
   getSnapshotStore,
   merchantItemIssuesConfigurationHash,
+  merchantProductIdentityDataKind,
+  merchantProductIdentityVersion,
   persistMerchantCenterItemIssuesResult,
   type SnapshotRecord
 } from "@eim/db";
@@ -375,9 +377,9 @@ function normalizeProduct(value: unknown, limits: NormalizedLimits): ProductNorm
     return { product: null, invalidIssueCount: 0, issueLimitReached: false, invalidProduct: true };
   }
 
-  const productName = readString(value.name, limits.maxStringLength);
-  const offerId = readString(value.offerId, limits.maxStringLength);
-  if (!productName && !offerId) {
+  const productName = readMerchantProductName(value.name, limits.maxStringLength);
+  const offerId = normalizeOfferId(readString(value.offerId, limits.maxStringLength));
+  if (!productName) {
     return { product: null, invalidIssueCount: 0, issueLimitReached: false, invalidProduct: true };
   }
 
@@ -417,9 +419,9 @@ function normalizeProduct(value: unknown, limits: NormalizedLimits): ProductNorm
     issueLimitReached = true;
   }
 
-  const stableKey = offerId
-    ? createStableProductKey({ offerId })
-    : `merchant_product:${createHash("sha256").update(productName!).digest("hex")}`;
+  // A Merchant resource name includes language/feed-label identity. Offer IDs are for matching,
+  // not for collapsing distinct provider resources before ambiguity can be evaluated.
+  const stableKey = `merchant_product:${createHash("sha256").update(productName).digest("hex")}`;
   const title = productAttributesTitle(value, limits.maxStringLength);
   const merchantStatus = readMerchantStatus(productStatus);
   const normalizedProductWithoutHash = {
@@ -544,9 +546,9 @@ function buildProductResult(
     paginationError?: { errorCode: string; errorMessage: string };
   }
 ): SourceCheckResult {
-  const items = [...products.values()]
-    .filter((product) => product.issues.length > 0)
-    .map(toSourceItem);
+  const normalizedProducts = [...products.values()];
+  const issueProducts = normalizedProducts.filter((product) => product.issues.length > 0);
+  const items = normalizedProducts.map(toSourceItem);
   const partial =
     details.skippedProducts > 0 ||
     details.invalidIssueCount > 0 ||
@@ -561,7 +563,7 @@ function buildProductResult(
   return buildResult(input.startedAt, input.endpoint, {
     status: partial ? "partial" : "success",
     httpStatus: details.httpStatus,
-    itemsObserved: items.length,
+    itemsObserved: issueProducts.length,
     totalItemsSeen: details.productsSeen,
     skippedItems: details.skippedProducts + details.invalidIssueCount,
     errorCode: details.paginationError?.errorCode ?? (partial ? errorSamples[0] : undefined),
@@ -571,8 +573,10 @@ function buildProductResult(
     items,
     metadata: {
       merchantItemIssuesVersion: "v1",
+      merchantProductIdentityVersion,
+      merchantProductIdentityComplete: !partial,
       productsSeen: details.productsSeen,
-      productsWithIssues: items.length,
+      productsWithIssues: issueProducts.length,
       issuesObserved: items.reduce((count, item) => count + (item.merchantIssues?.length ?? 0), 0),
       invalidIssueCount: details.invalidIssueCount,
       pagination: {
@@ -632,10 +636,10 @@ function toSourceItem(product: NormalizedMerchantCenterProduct): SourceItemInput
     offerId: product.offerId,
     title: product.title,
     merchantStatus: product.merchantStatus,
-    merchantIssues: product.issues,
+    ...(product.issues.length > 0 ? { merchantIssues: product.issues } : {}),
     metadata: {
-      merchantDataKind: "item_issues",
-      productName: product.productName
+      merchantDataKind: merchantProductIdentityDataKind,
+      merchantProductIdentityVersion
     },
     rawHash: product.rawHash
   };
@@ -787,11 +791,20 @@ function addConfigurationMetadata(
 ): SourceCheckResult {
   if (!accountId) return result;
 
+  const configurationHash = merchantItemIssuesConfigurationHash(accountId);
+
   return {
     ...result,
+    items: result.items.map((item) => ({
+      ...item,
+      metadata: {
+        ...(item.metadata ?? {}),
+        merchantItemIssuesConfigurationHash: configurationHash
+      }
+    })),
     metadata: {
       ...(isRecord(result.metadata) ? result.metadata : {}),
-      merchantItemIssuesConfigurationHash: merchantItemIssuesConfigurationHash(accountId)
+      merchantItemIssuesConfigurationHash: configurationHash
     }
   };
 }
@@ -871,6 +884,22 @@ function normalizeCountries(value: unknown): string[] {
 
 function readString(value: unknown, maxLength: number): string | undefined {
   return normalizeText(value, maxLength);
+}
+
+function readMerchantProductName(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const name = value.trim();
+  if (name.length === 0 || name.length > maxLength) return undefined;
+
+  const segments = name.split("/");
+  return segments.length === 4 &&
+    segments[0] === "accounts" &&
+    segments[1] &&
+    segments[2] === "products" &&
+    segments[3]
+    ? name
+    : undefined;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {

@@ -205,7 +205,9 @@ export async function getDashboardIncidentDetail(
         WHERE snapshot_id = $1
           AND store_id = $2
           AND source = 'merchant_center'
-          AND metadata_json ->> 'merchantDataKind' = 'item_issues'
+          AND metadata_json ->> 'merchantDataKind' IN ('item_issues', 'product_identity')
+          AND jsonb_typeof(merchant_issues_json) = 'array'
+          AND jsonb_array_length(merchant_issues_json) > 0
           AND $3::incident_type = 'merchant_item_issues'
         ORDER BY stable_key ASC
         LIMIT $4

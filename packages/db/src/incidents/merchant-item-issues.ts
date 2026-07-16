@@ -433,7 +433,9 @@ async function getMerchantItemIssueProducts(
       WHERE store_id = $1
         AND snapshot_id = $2
         AND source = 'merchant_center'
-        AND metadata_json ->> 'merchantDataKind' = 'item_issues'
+        AND metadata_json ->> 'merchantDataKind' IN ('item_issues', 'product_identity')
+        AND jsonb_typeof(merchant_issues_json) = 'array'
+        AND jsonb_array_length(merchant_issues_json) > 0
       ORDER BY stable_key ASC
     `,
     [storeId, snapshotId]
