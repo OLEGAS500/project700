@@ -247,6 +247,8 @@ describeIfDatabase("cross-source product mapping", () => {
       feedOnlyCount: 1,
       merchantOnlyCount: 1,
       ambiguousCount: 1,
+      countsTruncated: false,
+      samplesTruncated: true,
       truncated: true
     });
     expect(summary?.samples.matched.length).toBeLessThanOrEqual(50);

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { merchantItemIssuesConfigurationHash } from "@eim/db";
 import {
   collectMerchantCenterProductStatuses,
   type MerchantCenterStatusDependencies
@@ -91,6 +92,7 @@ describe("collectMerchantCenterProductStatuses", () => {
     });
     expect(result.metadata).toMatchObject({
       aggregationScope: "all_reporting_contexts_and_countries",
+      merchantCenterConfigurationHash: merchantItemIssuesConfigurationHash("123"),
       merchantStatusCounts: {
         total: 18,
         approved: 14,

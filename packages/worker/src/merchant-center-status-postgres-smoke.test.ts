@@ -75,6 +75,7 @@ describeIfDatabase("merchant center status postgres vertical slice", () => {
     const {
       connectMerchantCenter,
       createStore,
+      merchantItemIssuesConfigurationHash,
       upsertMerchantCenterOAuthCredentials
     } = await import("@eim/db");
     const { runMerchantCenterStatusSnapshotForStore } = await import("@eim/worker");
@@ -162,6 +163,7 @@ describeIfDatabase("merchant center status postgres vertical slice", () => {
     });
     expect(Number(checks.rows[0].count)).toBe(1);
     expect(checks.rows[0].metadata_json).toMatchObject({
+      merchantCenterConfigurationHash: merchantItemIssuesConfigurationHash("987654"),
       merchantStatusCounts: {
         total: 10,
         approved: 7,

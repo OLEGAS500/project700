@@ -300,7 +300,8 @@ function metricUnit(metric: string): string | null {
   if (
     metric.includes("product") ||
     metric.includes("mismatch") ||
-    metric === "matched_storefront_missing_from_feed"
+    metric === "matched_storefront_missing_from_feed" ||
+    metric === "merchant_inventory_missing_from_feed"
   ) {
     return "products";
   }

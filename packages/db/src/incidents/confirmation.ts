@@ -11,6 +11,7 @@ import {
   type CandidateRow,
   type IncidentCandidateRecord
 } from "./candidates";
+import { applyFeedMerchantCorrelation } from "./feed-merchant-correlation";
 import { upsertIncidentSignal } from "./signals";
 
 type BaselineRow = {
@@ -213,6 +214,13 @@ export async function confirmFeedCatalogDropCandidate(
       afterValue: snapshot.feed_product_count,
       changeAbs: decision.changeAbs,
       changePct: decision.changePct
+    });
+    await applyFeedMerchantCorrelation(client, {
+      incidentId,
+      storeId: candidate.store_id,
+      observedSnapshotId: candidate.first_snapshot_id,
+      feedBaselineMedian: Number(candidate.baseline_median),
+      thresholds: candidate.thresholds_json
     });
     await createIncidentOpenedAlertDelivery(client, {
       incidentId,
