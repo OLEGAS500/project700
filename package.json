@@ -11,7 +11,7 @@
     "build": "npm run build -w @eim/web",
     "lint": "npm run lint -w @eim/web",
     "test": "vitest run",
-    "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/db/src/incidents/merchant-item-issues-postgres-smoke.test.ts packages/db/src/dashboard/cross-source-product-mapping-postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts packages/worker/src/merchant-center-status-postgres-smoke.test.ts packages/worker/src/merchant-center-item-issues-postgres-smoke.test.ts",
+    "test:postgres": "RUN_POSTGRES_TESTS=1 vitest run packages/db/src/postgres-smoke.test.ts packages/db/src/incidents/merchant-item-issues-postgres-smoke.test.ts packages/db/src/incidents/feed-merchant-correlation-postgres-smoke.test.ts packages/db/src/dashboard/cross-source-product-mapping-postgres-smoke.test.ts packages/worker/src/sitemap-postgres-smoke.test.ts packages/worker/src/merchant-center-status-postgres-smoke.test.ts packages/worker/src/merchant-center-item-issues-postgres-smoke.test.ts",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "seed:merchant-remediation-qa": "tsx scripts/seed-merchant-remediation-qa.ts",

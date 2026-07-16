@@ -51,6 +51,8 @@ export type CrossSourceProductMatchSummary = {
     merchantOnly: ProductMatchSample[];
     ambiguous: ProductMatchSample[];
   };
+  countsTruncated: boolean;
+  samplesTruncated: boolean;
   truncated: boolean;
 };
 
@@ -260,6 +262,17 @@ export async function getCrossSourceProductMatchSummary(
       else samples.ambiguous.push(sample);
     }
 
+    const countsTruncated =
+      matched.truncated ||
+      feedOnly.truncated ||
+      merchantOnly.truncated ||
+      ambiguous.truncated;
+    const samplesTruncated =
+      matched.value > samples.matched.length ||
+      feedOnly.value > samples.feedOnly.length ||
+      merchantOnly.value > samples.merchantOnly.length ||
+      ambiguous.value > samples.ambiguous.length;
+
     return {
       feedSnapshotId: input.feedSnapshotId,
       merchantSnapshotId: input.merchantSnapshotId,
@@ -273,15 +286,9 @@ export async function getCrossSourceProductMatchSummary(
       merchantOnlyCount: merchantOnly.value,
       ambiguousCount: ambiguous.value,
       samples,
-      truncated:
-        matched.truncated ||
-        feedOnly.truncated ||
-        merchantOnly.truncated ||
-        ambiguous.truncated ||
-        matched.value > samples.matched.length ||
-        feedOnly.value > samples.feedOnly.length ||
-        merchantOnly.value > samples.merchantOnly.length ||
-        ambiguous.value > samples.ambiguous.length
+      countsTruncated,
+      samplesTruncated,
+      truncated: countsTruncated || samplesTruncated
     };
   });
 }
@@ -316,6 +323,8 @@ function emptySummary(input: {
       merchantOnly: [],
       ambiguous: []
     },
+    countsTruncated: false,
+    samplesTruncated: false,
     truncated: false
   };
 }

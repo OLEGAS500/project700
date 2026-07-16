@@ -16,6 +16,7 @@ import {
   MerchantCenterOAuthCredentialsNotFoundError,
   MerchantCenterOAuthRefreshInProgressError,
   releaseMerchantCenterOAuthRefresh,
+  merchantItemIssuesConfigurationHash,
   type MerchantCenterOAuthTokenSet,
   type UpsertMerchantCenterOAuthCredentialsInput
 } from "@eim/db";
@@ -116,17 +117,23 @@ export async function collectMerchantCenterProductStatuses(
   });
 
   if ("status" in access) {
-    return buildResult(startedAt, endpoint, access);
+    return addMerchantStatusConfigurationMetadata(
+      input.accountId,
+      buildResult(startedAt, endpoint, access)
+    );
   }
 
-  return fetchAggregateStatuses({
-    endpoint,
-    accessToken: access.accessToken,
-    fetchImpl,
-    timeoutMs,
-    startedAt,
-    limits
-  });
+  return addMerchantStatusConfigurationMetadata(
+    input.accountId,
+    await fetchAggregateStatuses({
+      endpoint,
+      accessToken: access.accessToken,
+      fetchImpl,
+      timeoutMs,
+      startedAt,
+      limits
+    })
+  );
 }
 
 export async function runMerchantCenterStatusSnapshotForStore(storeId: string): Promise<{
@@ -711,6 +718,19 @@ function buildResult(
     errorMessage: input.errorMessage,
     errorSamples: input.errorSamples,
     metadata: input.metadata
+  };
+}
+
+function addMerchantStatusConfigurationMetadata(
+  accountId: string,
+  result: import("@eim/core").SourceCheckResult
+): import("@eim/core").SourceCheckResult {
+  return {
+    ...result,
+    metadata: {
+      ...(result.metadata ?? {}),
+      merchantCenterConfigurationHash: merchantItemIssuesConfigurationHash(accountId)
+    }
   };
 }
 
