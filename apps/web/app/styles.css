@@ -357,6 +357,59 @@ textarea:disabled {
   line-height: 1.5;
 }
 
+.legal-shell {
+  width: min(860px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+
+.legal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.legal-header .product-mark {
+  margin: 0;
+}
+
+.legal-policy {
+  margin-top: 32px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.legal-policy h1 {
+  margin: 0;
+  font-size: clamp(36px, 7vw, 56px);
+  line-height: 1;
+}
+
+.legal-policy h2 {
+  margin: 28px 0 8px;
+  font-size: 19px;
+}
+
+.legal-policy p {
+  max-width: 680px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.legal-policy .legal-policy-intro {
+  margin-top: 18px;
+  color: var(--text);
+  font-size: 17px;
+}
+
 .primary-link {
   display: inline-flex;
   align-items: center;
@@ -2401,6 +2454,21 @@ textarea:disabled {
 }
 
 @media (max-width: 760px) {
+  .legal-shell {
+    width: min(100vw - 24px, 680px);
+    padding: 28px 0;
+  }
+
+  .legal-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .legal-policy {
+    margin-top: 24px;
+    padding: 24px;
+  }
+
   .merchant-center-overview {
     display: grid;
     align-items: start;
