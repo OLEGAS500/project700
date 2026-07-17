@@ -66,6 +66,9 @@ export default function MerchantCenterControls({
             inProgress={credentials.refreshInProgress}
           />
         ) : null}
+        {credentials && connection.merchantCenterAccountId ? (
+          <DeveloperRegistrationButton storeId={storeId} disabled={!configurationAvailable} />
+        ) : null}
         {credentials ? (
           <form
             action={disconnectAction}
@@ -143,6 +146,57 @@ function RefreshButton({
       <button type="button" onClick={refresh} disabled={disabled || pending}>
         {pending || inProgress ? "Refresh in progress" : "Refresh credentials"}
       </button>
+      {error ? <p className="merchant-center-action-error" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
+function DeveloperRegistrationButton({ storeId, disabled }: { storeId: string; disabled: boolean }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [registered, setRegistered] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function register() {
+    if (!window.confirm(
+      "Register the configured Google Cloud project with this Merchant Center account? This one-time action enables Merchant API calls."
+    )) {
+      return;
+    }
+
+    setPending(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/stores/${storeId}/merchant-center/developer-registration`, {
+        method: "POST",
+        headers: { accept: "application/json" }
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(
+          typeof body.error === "string"
+            ? body.error
+            : "Merchant Center developer registration failed."
+        );
+        return;
+      }
+      setRegistered(true);
+      router.refresh();
+    } catch {
+      setError("Merchant Center developer registration is temporarily unavailable.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="merchant-center-refresh">
+      <button type="button" onClick={register} disabled={disabled || pending || registered}>
+        {pending ? "Activating Merchant API..." : registered ? "Merchant API activated" : "Activate Merchant API"}
+      </button>
+      <p className="merchant-center-help">
+        Registers the configured Google Cloud project for this linked Merchant Center account.
+      </p>
       {error ? <p className="merchant-center-action-error" role="alert">{error}</p> : null}
     </div>
   );

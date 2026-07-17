@@ -39,6 +39,8 @@ describe("Merchant Center controls", () => {
 
     expect(html).toContain("Refresh credentials");
     expect(html).toContain(">Refresh credentials</button>");
+    expect(html).toContain("Activate Merchant API");
+    expect(html).toContain("Registers the configured Google Cloud project");
     expect(html).toContain("Disconnect");
     expect(html).not.toContain("access-secret");
     expect(html).not.toContain("refresh-secret");
@@ -57,6 +59,7 @@ describe("Merchant Center controls", () => {
 
     expect(html).toContain("Connect Merchant Center");
     expect(html).not.toContain("Refresh credentials");
+    expect(html).not.toContain("Activate Merchant API");
     expect(html).not.toContain("Disconnect");
   });
 });
