@@ -35,21 +35,21 @@ export async function GET(request: Request) {
 
   if (providerError || !code || code.length > 4096) {
     if (providerError) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "cancelled");
+      return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "cancelled");
     }
-    return redirectToMerchantCenter(request, stateRecord.storeId, "error");
+    return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "error");
   }
 
   try {
     const configuration = loadMerchantCenterOAuthConfiguration();
     if (stateRecord.redirectUri !== configuration.redirectUri) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
+      return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "error");
     }
     const tokenResponse = await exchangeMerchantCenterAuthorizationCode(configuration, code);
     const refreshToken = tokenResponse.refresh_token;
 
     if (!refreshToken || !Number.isSafeInteger(tokenResponse.expires_in)) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
+      return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "error");
     }
 
     await completeMerchantCenterOAuthAuthorization(stateHash, {
@@ -61,18 +61,22 @@ export async function GET(request: Request) {
       metadata: { provider: "google", authorization: "oauth2" }
     });
 
-    return redirectToMerchantCenter(request, stateRecord.storeId, "connected");
+    return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "connected");
   } catch (error) {
     if (error instanceof MerchantCenterOAuthConfigurationError) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "configuration_unavailable");
+      return redirectToMerchantCenter(
+        stateRecord.redirectUri,
+        stateRecord.storeId,
+        "configuration_unavailable"
+      );
     }
     if (error instanceof MerchantCenterOAuthProviderError) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "error");
+      return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "error");
     }
     if (error instanceof MerchantCenterOAuthStateInvalidError) {
-      return redirectToMerchantCenter(request, stateRecord.storeId, "reconnect_required");
+      return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "reconnect_required");
     }
-    return redirectToMerchantCenter(request, stateRecord.storeId, "error");
+    return redirectToMerchantCenter(stateRecord.redirectUri, stateRecord.storeId, "error");
   }
 }
 
@@ -89,13 +93,13 @@ function unavailableResponse(): NextResponse {
 }
 
 function redirectToMerchantCenter(
-  request: Request,
+  redirectUri: string,
   storeId: string,
   outcome: "connected" | "cancelled" | "error" | "configuration_unavailable" | "reconnect_required"
 ): NextResponse {
   const target = new URL(
     `/stores/${encodeURIComponent(storeId)}/merchant-center?oauth=${outcome}`,
-    request.url
+    redirectUri
   );
   return NextResponse.redirect(target, { status: 303 });
 }

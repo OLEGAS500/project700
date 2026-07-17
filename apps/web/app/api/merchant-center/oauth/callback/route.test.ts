@@ -60,7 +60,7 @@ describe("Merchant Center OAuth callback API", () => {
     });
 
     const response = await GET(
-      new Request("https://app.example.com/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
+      new Request("http://localhost:8080/api/merchant-center/oauth/callback?state=raw-state&code=auth-code")
     );
 
     expect(response.status).toBe(303);
@@ -136,7 +136,7 @@ describe("Merchant Center OAuth callback API", () => {
     );
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      `https://app.example.com/stores/${storeId}/merchant-center?oauth=error`
+      `https://old.example.com/stores/${storeId}/merchant-center?oauth=error`
     );
   });
 });
