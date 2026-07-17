@@ -618,7 +618,16 @@ function buildAggregateResult(
 function readAggregateResources(payload: unknown): unknown[] | null {
   if (!isRecord(payload)) return null;
   const resources = payload.aggregateProductStatuses ?? payload.aggregate_product_statuses;
+  if (resources === undefined) {
+    return hasOnlyPaginationFields(payload) ? [] : null;
+  }
   return Array.isArray(resources) ? resources : null;
+}
+
+function hasOnlyPaginationFields(value: Record<string, unknown>): boolean {
+  return Object.keys(value).every(
+    (key) => key === "nextPageToken" || key === "next_page_token"
+  );
 }
 
 function readNextPageToken(payload: unknown): {

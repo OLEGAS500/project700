@@ -298,6 +298,23 @@ describe("collectMerchantCenterProductStatuses", () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it("accepts an empty aggregate response when its repeated field is omitted", async () => {
+    const result = await collectMerchantCenterProductStatuses({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      itemsObserved: 0,
+      totalItemsSeen: 0,
+      skippedItems: 0,
+      metadata: { pagination: { pagesFetched: 1, complete: true } }
+    });
+  });
+
   it("returns partial for malformed aggregate resources without raw provider data", async () => {
     const result = await collectMerchantCenterProductStatuses({
       storeId: "store-1",
