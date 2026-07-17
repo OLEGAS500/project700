@@ -724,7 +724,16 @@ async function requestProductPage(input: {
 function readProducts(payload: unknown): unknown[] | null {
   if (!isRecord(payload)) return null;
   const products = payload.products;
+  if (products === undefined) {
+    return hasOnlyPaginationFields(payload) ? [] : null;
+  }
   return Array.isArray(products) ? products : null;
+}
+
+function hasOnlyPaginationFields(value: Record<string, unknown>): boolean {
+  return Object.keys(value).every(
+    (key) => key === "nextPageToken" || key === "next_page_token"
+  );
 }
 
 function readNextPageToken(payload: unknown): { token: string | null; malformed: boolean } {

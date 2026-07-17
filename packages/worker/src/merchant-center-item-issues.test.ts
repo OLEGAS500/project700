@@ -316,6 +316,23 @@ describe("collectMerchantCenterItemIssues", () => {
     });
   });
 
+  it("accepts an empty products response when its repeated field is omitted", async () => {
+    const result = await collectMerchantCenterItemIssues({
+      storeId: "store-1",
+      accountId: "123",
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+      dependencies: dependencies()
+    });
+
+    expect(result).toMatchObject({
+      status: "success",
+      itemsObserved: 0,
+      totalItemsSeen: 0,
+      skippedItems: 0,
+      metadata: { pagination: { pagesFetched: 1, complete: true } }
+    });
+  });
+
   it("emits a complete product identity inventory when no products have issues", async () => {
     const result = await collectMerchantCenterItemIssues({
       storeId: "store-1",
