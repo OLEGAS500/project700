@@ -9,6 +9,10 @@ This runbook is a manual release gate for the Merchant Center OAuth UI. It must 
 - An authorized redirect URI matching the deployed route exactly:
   `https://staging.example.com/api/merchant-center/oauth/callback`.
 - A staging store that can be safely disconnected and reconnected.
+- A production-type disposable Merchant Center account with a verified homepage. Google
+  does not permit developer registration against Merchant Center test accounts.
+- The Google user used for OAuth has `ADMIN` and `API developer` access in that Merchant
+  Center account. The Google Cloud project is registered only with this intended account.
 - Runtime variables configured outside the repository:
   - `DATABASE_URL`
   - `GOOGLE_MERCHANT_CENTER_CLIENT_ID`
@@ -27,10 +31,15 @@ This runbook is a manual release gate for the Merchant Center OAuth UI. It must 
 5. Confirm the browser returns to the store page with a success banner.
 6. Confirm the page shows only account metadata, scopes, expiry, credentials version, and updated time. It must not show access tokens, refresh tokens, authorization codes, client secrets, or provider diagnostics.
 7. Start `Refresh credentials` once. Confirm the page returns to a healthy connected state and the credentials version advances.
-8. Open a second browser tab and submit refresh while the first request is still running. Confirm the UI shows a safe in-progress message and no credentials are exposed.
-9. Select `Disconnect`, accept the explicit confirmation, and confirm the page shows `Not connected`.
-10. Reconnect the same staging account and confirm a new authorization succeeds.
-11. Repeat the flow with Google cancellation. Confirm the app returns to the store page with a cancellation message and no credentials are created.
+8. Select `Activate Merchant API` and accept the explicit confirmation. This performs the
+   one-time Google Cloud project registration for the linked Merchant Center account; the
+   UI must report only success or a safe failure, never provider payloads or tokens.
+9. Wait five minutes after a successful registration before calling the real collectors,
+   as required by Google Merchant API propagation.
+10. Open a second browser tab and submit refresh while the first request is still running. Confirm the UI shows a safe in-progress message and no credentials are exposed.
+11. Select `Disconnect`, accept the explicit confirmation, and confirm the page shows `Not connected`.
+12. Reconnect the same staging account and confirm a new authorization succeeds.
+13. Repeat the flow with Google cancellation. Confirm the app returns to the store page with a cancellation message and no credentials are created.
 
 ## Database and logs
 
