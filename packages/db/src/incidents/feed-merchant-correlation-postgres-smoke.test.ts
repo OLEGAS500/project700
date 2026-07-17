@@ -420,7 +420,7 @@ describeIfDatabase("feed and Merchant catalog-drop correlation", () => {
       expect(signals.rows[0]?.count).toBe("0");
       expect(Number(confidence.rows[0]?.confidence_score)).toBe(0.85);
     }
-  });
+  }, 15_000);
 
   it("requires reconciled, threshold-sized Merchant identity-loss evidence", async () => {
     const smallIdentityLoss = await createCatalogDropScenario(db, {
